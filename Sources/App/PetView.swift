@@ -420,23 +420,34 @@ private struct BubbleCarousel: View {
     @ObservedObject private var settings = BubbleSettings.shared
     @Environment(\.petOnScreen) private var onScreen
     @State private var index = 0
+    /// Live number of groups, refreshed on every render. The rotation timer's
+    /// closure captures a copy of this view, so reading `groups.count` there
+    /// sees the count from when the timer was armed (and each `step` re-arms
+    /// it from that same stale copy). A reference box is shared by all copies.
+    @State private var live = LiveCount()
     @State private var timer: Timer?
     @State private var dragOffset: CGFloat = 0
 
     private static let interval: TimeInterval = 3.0
     private static let swipeThreshold: CGFloat = 32
 
+    /// `index` wrapped to the groups on screen now, so a render between a
+    /// group dropping out and `onChange` resetting `index` never reads past
+    /// the end (which drew an empty bubble).
+    private var shownIndex: Int { CarouselIndex.shown(index, count: groups.count) }
+
     var body: some View {
+        let _ = live.value = groups.count
         VStack(alignment: .leading, spacing: chatStyle ? 4 : 5) {
             Group {
-                if let group = groups[safe: index] {
+                if let group = groups[safe: shownIndex] {
                     AgentRow(session: group.session, count: group.count, chatStyle: chatStyle)
                         .id(group.id)
                         .transition(.opacity)
                 }
             }
             .offset(x: dragOffset)
-            .animation(.easeInOut(duration: 0.35), value: index)
+            .animation(.easeInOut(duration: 0.35), value: shownIndex)
             .clipped()
 
             if groups.count > 1 {
@@ -444,7 +455,7 @@ private struct BubbleCarousel: View {
                     Spacer(minLength: 0)
                     ForEach(0..<groups.count, id: \.self) { i in
                         Circle()
-                            .fill(i == index ? dotActive : dotInactive)
+                            .fill(i == shownIndex ? dotActive : dotInactive)
                             .frame(width: 4, height: 4)
                     }
                     Spacer(minLength: 0)
@@ -504,9 +515,10 @@ private struct BubbleCarousel: View {
     private var dotInactive: Color { dotColor(0.25) }
 
     private func step(by delta: Int) {
-        guard groups.count > 1 else { return }
+        let count = live.value
+        guard count > 1 else { return }
         withAnimation(.easeInOut(duration: 0.35)) {
-            index = (index + delta + groups.count) % groups.count
+            index = CarouselIndex.step(index, by: delta, count: count)
         }
         syncTimer()
     }
@@ -522,6 +534,26 @@ private struct BubbleCarousel: View {
     private func stopTimer() {
         timer?.invalidate()
         timer = nil
+    }
+}
+
+/// Mutable box so every copy of `BubbleCarousel` reads the same live value.
+@MainActor
+private final class LiveCount {
+    var value = 0
+}
+
+/// Carousel page arithmetic, kept pure so it can be unit tested.
+enum CarouselIndex {
+    /// The page to draw for a stored `index` that may be stale (past the end).
+    static func shown(_ index: Int, count: Int) -> Int {
+        count > 0 ? ((index % count) + count) % count : 0
+    }
+
+    /// The page after moving `delta` steps, wrapping within `count` pages.
+    static func step(_ index: Int, by delta: Int, count: Int) -> Int {
+        guard count > 0 else { return 0 }
+        return shown(index + delta, count: count)
     }
 }
 
