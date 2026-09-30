@@ -13,8 +13,7 @@ public enum StateMapper {
         case .gemini: return eventName == "SessionEnd"
         case .cursor: return eventName == "sessionEnd"
         case .droid: return eventName == "SessionEnd"
-        case .grok: return eventName == "session_end"
-        case .jcode: return eventName == "session_end"
+        case .grok, .jcode: return eventName == "session_end"
         default: return false
         }
     }

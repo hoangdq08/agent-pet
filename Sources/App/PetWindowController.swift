@@ -341,21 +341,26 @@ final class PetWindowController: ObservableObject {
         // fit, including any shrink, still waits for the debounce so a burst
         // of intermediate sizes (spring animations) doesn't jitter the window.
         let current = managed.panel.frame.size
-        let padded = CGSize(width: size.width + 4, height: size.height + 4)
-        if padded.width > current.width + 1 || padded.height > current.height + 1 {
-            applyContentResize(CGSize(width: max(size.width, current.width - 4),
-                                      height: max(size.height, current.height - 4)), to: managed)
+        let target = Self.padded(size)
+        if target.width > current.width + 1 || target.height > current.height + 1 {
+            resizeIfChanged(managed, to: CGSize(width: max(target.width, current.width),
+                                                height: max(target.height, current.height)))
         }
         let work = DispatchWorkItem { [weak self] in
             guard let self, let managed = self.windows[key] else { return }
-            self.applyContentResize(size, to: managed)
+            self.resizeIfChanged(managed, to: Self.padded(size))
         }
         managed.resizeDebounce = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: work)
     }
 
-    private func applyContentResize(_ size: CGSize, to managed: ManagedPetWindow) {
-        let padded = CGSize(width: size.width + 4, height: size.height + 4)
+    /// Window size for measured content: a small margin on every side.
+    private static func padded(_ content: CGSize) -> CGSize {
+        CGSize(width: content.width + 4, height: content.height + 4)
+    }
+
+    /// Resizes to `padded` unless it is within 1pt of the last applied size.
+    private func resizeIfChanged(_ managed: ManagedPetWindow, to padded: CGSize) {
         let dw = abs(padded.width - managed.lastContentSize.width)
         let dh = abs(padded.height - managed.lastContentSize.height)
         guard dw > 1 || dh > 1 || managed.lastContentSize == .zero else { return }
