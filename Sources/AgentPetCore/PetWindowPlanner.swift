@@ -14,6 +14,29 @@ public enum PetWindowGeometry {
                        y: origin.y.clamped(visible.minY, maxY))
     }
 
+    /// Vertical origin that keeps a window of `height` between `visibleMinY`
+    /// and `visibleMaxY`. The top is fitted first (a taller bubble moves down
+    /// under the menu bar), then the bottom wins, so if the window is taller
+    /// than the screen it is the pet at the bottom that stays visible.
+    public static func verticalOrigin(_ y: CGFloat, height: CGFloat,
+                                      visibleMinY: CGFloat, visibleMaxY: CGFloat) -> CGFloat {
+        var y = y
+        if y + height > visibleMaxY { y = visibleMaxY - height }
+        if y < visibleMinY { y = visibleMinY }
+        return y
+    }
+
+    /// Index of the rect closest to `point` (0 when the point is inside it),
+    /// for a pet dropped outside every screen. Nil only when `rects` is empty.
+    public static func nearestRectIndex(to point: CGPoint, in rects: [CGRect]) -> Int? {
+        func distance(_ r: CGRect) -> CGFloat {
+            let dx = max(r.minX - point.x, 0, point.x - r.maxX)
+            let dy = max(r.minY - point.y, 0, point.y - r.maxY)
+            return dx * dx + dy * dy
+        }
+        return rects.indices.min { distance(rects[$0]) < distance(rects[$1]) }
+    }
+
     /// Horizontal placement for a pet window of `width` whose pet (`petWidth`
     /// wide) should stay centred at `anchorX`. The window is kept inside
     /// `[visibleMinX, visibleMaxX]` so a wide bubble never spills onto another

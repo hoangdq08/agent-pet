@@ -201,6 +201,42 @@ final class PetWindowGeometryTests: XCTestCase {
         XCTAssertEqual(clamped.x, 1920 + 1920 - 260)
     }
 
+    // MARK: verticalOrigin (pet dragged past the bottom or top edge)
+
+    func testVerticalInsideIsUnchanged() {
+        XCTAssertEqual(PetWindowGeometry.verticalOrigin(400, height: 170, visibleMinY: 0, visibleMaxY: 1020), 400)
+    }
+
+    func testVerticalBelowBottomComesBackUp() {
+        // Dropped with the window 61pt below the screen (the reported bug).
+        XCTAssertEqual(PetWindowGeometry.verticalOrigin(-61, height: 170, visibleMinY: 0, visibleMaxY: 1020), 0)
+        // A secondary display whose visible frame starts below zero.
+        XCTAssertEqual(PetWindowGeometry.verticalOrigin(-490, height: 170, visibleMinY: -102, visibleMaxY: 1050), -102)
+    }
+
+    func testVerticalAboveTopMovesDown() {
+        XCTAssertEqual(PetWindowGeometry.verticalOrigin(1268, height: 170, visibleMinY: 0, visibleMaxY: 1020), 850)
+    }
+
+    func testVerticalTallerThanScreenKeepsPetAtBottom() {
+        XCTAssertEqual(PetWindowGeometry.verticalOrigin(500, height: 1200, visibleMinY: 0, visibleMaxY: 1020), 0)
+    }
+
+    // MARK: nearestRectIndex (pet dropped outside every screen)
+
+    func testNearestRectPicksContainingThenClosest() {
+        let left = CGRect(x: 0, y: 0, width: 1680, height: 1020)
+        let right = CGRect(x: 1680, y: -102, width: 2048, height: 1152)
+        let screens = [left, right]
+        XCTAssertEqual(PetWindowGeometry.nearestRectIndex(to: CGPoint(x: 800, y: 500), in: screens), 0)
+        XCTAssertEqual(PetWindowGeometry.nearestRectIndex(to: CGPoint(x: 2600, y: 500), in: screens), 1)
+        XCTAssertEqual(PetWindowGeometry.nearestRectIndex(to: CGPoint(x: 4100, y: 400), in: screens), 1)  // past right
+        XCTAssertEqual(PetWindowGeometry.nearestRectIndex(to: CGPoint(x: -340, y: 500), in: screens), 0)  // past left
+        XCTAssertEqual(PetWindowGeometry.nearestRectIndex(to: CGPoint(x: 850, y: 1300), in: screens), 0)  // above left
+        XCTAssertEqual(PetWindowGeometry.nearestRectIndex(to: CGPoint(x: 2700, y: -500), in: screens), 1) // below right
+        XCTAssertNil(PetWindowGeometry.nearestRectIndex(to: .zero, in: []))
+    }
+
     // MARK: horizontalLayout (bubble stays on the pet's screen, pet stays put)
 
     func testLayoutCentredWhenRoomOnBothSides() {
