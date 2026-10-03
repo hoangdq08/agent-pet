@@ -201,25 +201,21 @@ final class PetWindowGeometryTests: XCTestCase {
         XCTAssertEqual(clamped.x, 1920 + 1920 - 260)
     }
 
-    // MARK: verticalOrigin (pet dragged past the bottom or top edge)
+    // MARK: clampOrigin's Y, as used after a drag (pet dropped past the bottom)
 
-    func testVerticalInsideIsUnchanged() {
-        XCTAssertEqual(PetWindowGeometry.verticalOrigin(400, height: 170, visibleMinY: 0, visibleMaxY: 1020), 400)
-    }
-
-    func testVerticalBelowBottomComesBackUp() {
-        // Dropped with the window 61pt below the screen (the reported bug).
-        XCTAssertEqual(PetWindowGeometry.verticalOrigin(-61, height: 170, visibleMinY: 0, visibleMaxY: 1020), 0)
+    func testDroppedBelowBottomComesBackUp() {
+        let pet = CGSize(width: 176, height: 170)
+        // Window 61pt below the screen (the reported bug).
+        XCTAssertEqual(PetWindowGeometry.clampOrigin(CGPoint(x: 700, y: -61), size: pet, into: visible).y, 0)
         // A secondary display whose visible frame starts below zero.
-        XCTAssertEqual(PetWindowGeometry.verticalOrigin(-490, height: 170, visibleMinY: -102, visibleMaxY: 1050), -102)
+        let right = CGRect(x: 1680, y: -102, width: 2048, height: 1152)
+        XCTAssertEqual(PetWindowGeometry.clampOrigin(CGPoint(x: 2600, y: -490), size: pet, into: right).y, -102)
     }
 
-    func testVerticalAboveTopMovesDown() {
-        XCTAssertEqual(PetWindowGeometry.verticalOrigin(1268, height: 170, visibleMinY: 0, visibleMaxY: 1020), 850)
-    }
-
-    func testVerticalTallerThanScreenKeepsPetAtBottom() {
-        XCTAssertEqual(PetWindowGeometry.verticalOrigin(500, height: 1200, visibleMinY: 0, visibleMaxY: 1020), 0)
+    func testWindowTallerThanScreenKeepsBottomVisible() {
+        // A tall bubble: the bottom (where the pet is) wins over the top.
+        let tall = CGSize(width: 176, height: 1200)
+        XCTAssertEqual(PetWindowGeometry.clampOrigin(CGPoint(x: 700, y: 500), size: tall, into: visible).y, 0)
     }
 
     // MARK: nearestRectIndex (pet dropped outside every screen)
