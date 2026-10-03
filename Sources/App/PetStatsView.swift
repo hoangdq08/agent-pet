@@ -312,50 +312,26 @@ struct PetStatsView: View {
     // MARK: - Usage / limits
 
     @ObservedObject private var probe = NativeUsageProbe.shared
+    @ObservedObject private var visibility = UsageVisibility.shared
 
     @ViewBuilder private var usageBlock: some View {
-        let providers = NativeUsageProbe.combined()
+        let providers = visibility.visible(NativeUsageProbe.combined())
         if !providers.isEmpty {
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: 8) {
                 Text("Limits")
                     .font(.system(size: 9, weight: .semibold)).tracking(0.8)
                     .foregroundStyle(.white.opacity(0.35))
                 ForEach(providers) { p in
-                    let used = 1 - (p.fractionLeft ?? 0)      // bar fills as you spend
-                    // Match the level bar's stage colour; only flip to a warning
-                    // tint when a budget is nearly spent.
-                    let color: Color = used > 0.9 ? .red : (used > 0.75 ? .orange : stageColor)
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
-                            Text(verbatim: p.displayName)
-                                .font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.9))
-                            if let w = p.windowLabel {
-                                Text(verbatim: w).font(.system(size: 9)).foregroundStyle(.white.opacity(0.4))
-                            }
-                            Spacer()
-                            Text(String(format: NSLocalizedString("%d%% used", comment: ""), Int((used * 100).rounded())))
-                                .font(.system(size: 10, weight: .semibold)).foregroundStyle(color)
-                            if let reset = Self.resetText(p.resetsAt) {
-                                Text(verbatim: "· \(reset)").font(.system(size: 9)).foregroundStyle(.white.opacity(0.4))
-                            }
-                        }
-                        GeometryReader { geo in
-                            ZStack(alignment: .leading) {
-                                Capsule().fill(.white.opacity(0.1))
-                                Capsule().fill(color).frame(width: max(2, geo.size.width * used))
-                            }
-                        }
-                        .frame(height: 5)
-                    }
+                    LimitWindowsView(provider: p, tint: stageColor)
                 }
             }
         }
     }
 
     /// "resets in 3h" / "in 12m" from a reset timestamp.
-    static func resetText(_ date: Date?) -> String? {
+    static func resetText(_ date: Date?, now: Date = Date()) -> String? {
         guard let date else { return nil }
-        let secs = date.timeIntervalSinceNow
+        let secs = date.timeIntervalSince(now)
         guard secs > 0 else { return nil }
         if secs >= 86400 { return String(format: NSLocalizedString("resets in %dd", comment: ""), Int(secs / 86400)) }
         if secs >= 3600 { return String(format: NSLocalizedString("resets in %dh", comment: ""), Int(secs / 3600)) }

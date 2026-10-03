@@ -27,7 +27,7 @@ final class NativeUsageProbe: ObservableObject {
 
     /// True when some subscription is nearly exhausted.
     var limitLow: Bool {
-        providers.compactMap(\.fractionLeft).contains { $0 < 0.15 }
+        UsageVisibility.shared.visible(providers).compactMap(\.fractionLeft).contains { $0 < 0.15 }
     }
 
     /// Native probes first; OpenUsage (when running) fills in the providers we
@@ -94,11 +94,15 @@ final class NativeUsageProbe: ObservableObject {
         var tightest = 2.0
         var resetsAt: Date?
         var windowLabel: String?
-        for (key, label) in [("five_hour", "Session"), ("seven_day", "Weekly")] {
+        var windows: [OpenUsageClient.Window] = []
+        for (key, label, period) in [("five_hour", "Session", 18_000.0), ("seven_day", "Weekly", 604_800.0)] {
             if let window = json[key] as? [String: Any],
                let used = window["utilization"] as? Double {
                 let left = max(0, min(1, (100 - used) / 100))
                 fractions.append(left)
+                windows.append(OpenUsageClient.Window(
+                    label: label, fractionLeft: left,
+                    resetsAt: OpenUsageClient.resetDate(window["resets_at"]), period: period))
                 if left < tightest {
                     tightest = left
                     windowLabel = label
@@ -114,7 +118,8 @@ final class NativeUsageProbe: ObservableObject {
             fractionLeft: fractions.min(),
             todayLabel: nil,
             resetsAt: resetsAt,
-            windowLabel: windowLabel
+            windowLabel: windowLabel,
+            windows: windows
         )
     }
 
@@ -205,6 +210,7 @@ final class NativeUsageProbe: ObservableObject {
         var tightest = 2.0
         var resetsAt: Date?
         var windowLabel: String?
+        var windows: [OpenUsageClient.Window] = []
         for (headerName, bodyKey, label) in [
             ("x-codex-primary-used-percent", "primary_window", "Session"),
             ("x-codex-secondary-used-percent", "secondary_window", "Weekly"),
@@ -216,16 +222,20 @@ final class NativeUsageProbe: ObservableObject {
             guard let usedPct = used else { continue }
             let left = max(0, min(1, (100 - usedPct) / 100))
             fractions.append(left)
+            // The API sends an absolute `reset_at` (epoch) and a relative
+            // `reset_after_seconds`; `resets_in_seconds` is kept as a fallback.
+            var windowReset = OpenUsageClient.resetDate(window?["reset_at"])
+            if windowReset == nil,
+               let secs = (window?["reset_after_seconds"] ?? window?["resets_in_seconds"]) as? Double {
+                windowReset = now.addingTimeInterval(secs)
+            }
+            windows.append(OpenUsageClient.Window(
+                label: label, fractionLeft: left, resetsAt: windowReset,
+                period: window?["limit_window_seconds"] as? Double))
             if left < tightest {
                 tightest = left
                 windowLabel = label
-                // The API sends an absolute `reset_at` (epoch) and a relative
-                // `reset_after_seconds`; `resets_in_seconds` is kept as a fallback.
-                if let at = OpenUsageClient.resetDate(window?["reset_at"]) {
-                    resetsAt = at
-                } else if let secs = (window?["reset_after_seconds"] ?? window?["resets_in_seconds"]) as? Double {
-                    resetsAt = now.addingTimeInterval(secs)
-                }
+                resetsAt = windowReset
             }
         }
         guard !fractions.isEmpty else { return nil }
@@ -236,7 +246,8 @@ final class NativeUsageProbe: ObservableObject {
             fractionLeft: fractions.min(),
             todayLabel: nil,
             resetsAt: resetsAt,
-            windowLabel: windowLabel
+            windowLabel: windowLabel,
+            windows: windows
         )
     }
 
