@@ -52,7 +52,7 @@ final class OpenUsageClient: ObservableObject {
 
     /// The tightest remaining budget across all providers, 0…1.
     var lowestFractionLeft: Double? {
-        UsageVisibility.shared.visible(providers).compactMap(\.fractionLeft).min()
+        UsageVisibility.shared.lowestFractionLeft(providers)
     }
 
     /// True when some subscription is nearly exhausted — makes the pet anxious.

@@ -27,7 +27,7 @@ final class NativeUsageProbe: ObservableObject {
 
     /// True when some subscription is nearly exhausted.
     var limitLow: Bool {
-        UsageVisibility.shared.visible(providers).compactMap(\.fractionLeft).contains { $0 < 0.15 }
+        UsageVisibility.shared.limitLow(providers)
     }
 
     /// Native probes first; OpenUsage (when running) fills in the providers we
