@@ -415,7 +415,9 @@ final class PetWindowController: ObservableObject {
 
         var origin = NSPoint(x: anchor.x - size.width / 2, y: anchor.y)
         let probe = NSRect(origin: origin, size: size)
-        let visible = screen(containing: anchor, fallback: probe)?.visibleFrame
+        // A pet dropped outside every screen still gets fitted, onto the
+        // closest one, instead of being left off screen.
+        let visible = (screen(containing: anchor, fallback: probe) ?? nearestScreen(to: anchor))?.visibleFrame
         var petOffset: CGFloat = 0
         if let visible {
             let petWidth = PetController.shared.petPoint
@@ -425,9 +427,11 @@ final class PetWindowController: ObservableObject {
             origin.x = layout.originX
             petOffset = layout.petOffset
         }
-        // Y: only nudge down if the taller bubble would run off the top.
-        if let visible, origin.y + size.height > visible.maxY {
-            origin.y = visible.maxY - size.height
+        // Y: keep the window between the screen's bottom (or the Dock) and the
+        // menu bar, so a pet dragged down past the edge comes back up on release.
+        if let visible {
+            origin.y = PetWindowGeometry.verticalOrigin(
+                origin.y, height: size.height, visibleMinY: visible.minY, visibleMaxY: visible.maxY)
         }
         // Publish the offset before moving: the didMove observer re-derives
         // the anchor from frame + petOffset.
@@ -465,6 +469,12 @@ final class PetWindowController: ObservableObject {
     private func screen(containing anchor: NSPoint, fallback frame: NSRect) -> NSScreen? {
         let p = NSPoint(x: anchor.x, y: anchor.y + 1)
         return NSScreen.screens.first { NSPointInRect(p, $0.frame) } ?? currentScreen(for: frame)
+    }
+
+    /// The screen whose visible area is closest to `point`.
+    private func nearestScreen(to point: NSPoint) -> NSScreen? {
+        let screens = NSScreen.screens
+        return PetWindowGeometry.nearestRectIndex(to: point, in: screens.map(\.visibleFrame)).map { screens[$0] }
     }
 
     /// Keeps every pet visible after a display configuration change: if a pet's
