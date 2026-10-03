@@ -428,10 +428,10 @@ final class PetWindowController: ObservableObject {
             petOffset = layout.petOffset
         }
         // Y: keep the window between the screen's bottom (or the Dock) and the
-        // menu bar, so a pet dragged down past the edge comes back up on release.
+        // menu bar, so a pet dragged past either edge comes back on release.
+        // X stays as horizontalLayout placed it (the pet may sit offset inside).
         if let visible {
-            origin.y = PetWindowGeometry.verticalOrigin(
-                origin.y, height: size.height, visibleMinY: visible.minY, visibleMaxY: visible.maxY)
+            origin.y = PetWindowGeometry.clampOrigin(origin, size: size, into: visible).y
         }
         // Publish the offset before moving: the didMove observer re-derives
         // the anchor from frame + petOffset.
