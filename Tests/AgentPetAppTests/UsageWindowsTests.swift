@@ -5,9 +5,7 @@ import XCTest
 @MainActor
 final class UsageWindowsTests: XCTestCase {
 
-    private func json(_ s: String) throws -> [String: Any] {
-        try XCTUnwrap(JSONSerialization.jsonObject(with: Data(s.utf8)) as? [String: Any])
-    }
+    private func json(_ s: String) throws -> [String: Any] { try UsageTestSupport.json(s) }
 
     // MARK: - Every window is kept
 
@@ -92,15 +90,9 @@ final class UsageWindowsTests: XCTestCase {
     // MARK: - Hiding providers
 
     func testHiddenProvidersAreFilteredAndPersisted() throws {
-        let suite = "agentpet.tests.usageVisibility"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defaults.removePersistentDomain(forName: suite)
-        defer { defaults.removePersistentDomain(forName: suite) }
-
+        try UsageTestSupport.withCleanDefaults { defaults in
         let store = UsageVisibility(defaults: defaults)
-        let providers = ["claude", "codex", "grok"].map {
-            OpenUsageClient.Provider(id: $0, displayName: $0, plan: nil, fractionLeft: 0.5, todayLabel: nil)
-        }
+        let providers = ["claude", "codex", "grok"].map { UsageTestSupport.provider($0, left: 0.5) }
         XCTAssertEqual(store.visible(providers).map(\.id), ["claude", "codex", "grok"])
 
         store.setVisible("grok", false)
@@ -111,21 +103,16 @@ final class UsageWindowsTests: XCTestCase {
 
         store.setVisible("grok", true)
         XCTAssertEqual(UsageVisibility(defaults: defaults).visible(providers).map(\.id), ["claude", "codex", "grok"])
+        }
     }
 
     /// A nearly spent provider the user hid must not make the pet anxious
     /// (limitLow) or trigger the rate-limit bubble (lowestFractionLeft).
     func testHiddenProviderDoesNotDriveMoodOrBubble() throws {
-        let suite = "agentpet.tests.usageVisibility"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defaults.removePersistentDomain(forName: suite)
-        defer { defaults.removePersistentDomain(forName: suite) }
-
+        try UsageTestSupport.withCleanDefaults { defaults in
         let store = UsageVisibility(defaults: defaults)
-        let providers = [
-            OpenUsageClient.Provider(id: "claude", displayName: "Claude", plan: nil, fractionLeft: 0.6, todayLabel: nil),
-            OpenUsageClient.Provider(id: "grok", displayName: "Grok", plan: nil, fractionLeft: 0.05, todayLabel: nil),
-        ]
+        let providers = [UsageTestSupport.provider("claude", left: 0.6),
+                         UsageTestSupport.provider("grok", left: 0.05)]
         XCTAssertTrue(store.limitLow(providers))
         XCTAssertEqual(store.lowestFractionLeft(providers) ?? -1, 0.05, accuracy: 0.0001)
         let engine = ReactiveEngine()
@@ -140,5 +127,22 @@ final class UsageWindowsTests: XCTestCase {
         store.setVisible("claude", false)
         XCTAssertFalse(store.limitLow(providers))
         XCTAssertNil(store.lowestFractionLeft(providers))
+        }
+    }
+
+    /// The summary fields come from the windows: the tightest one wins, and a
+    /// provider with no limit (text/badge only) has none at all.
+    func testSummaryFollowsTightestWindow() {
+        let p = OpenUsageClient.Provider(id: "x", displayName: "X", plan: nil, todayLabel: nil, windows: [
+            .init(label: "Session", fractionLeft: 0.9, resetsAt: Date(timeIntervalSince1970: 1)),
+            .init(label: "Weekly", fractionLeft: 0.2, resetsAt: Date(timeIntervalSince1970: 2)),
+        ])
+        XCTAssertEqual(p.fractionLeft, 0.2)
+        XCTAssertEqual(p.windowLabel, "Weekly")
+        XCTAssertEqual(p.resetsAt, Date(timeIntervalSince1970: 2))
+        let none = OpenUsageClient.Provider(id: "y", displayName: "Y", plan: nil, todayLabel: "$3")
+        XCTAssertNil(none.fractionLeft)
+        XCTAssertNil(none.windowLabel)
+        XCTAssertNil(none.resetsAt)
     }
 }

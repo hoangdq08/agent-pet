@@ -328,16 +328,6 @@ struct PetStatsView: View {
         }
     }
 
-    /// "resets in 3h" / "in 12m" from a reset timestamp.
-    static func resetText(_ date: Date?, now: Date = Date()) -> String? {
-        guard let date else { return nil }
-        let secs = date.timeIntervalSince(now)
-        guard secs > 0 else { return nil }
-        if secs >= 86400 { return String(format: NSLocalizedString("resets in %dd", comment: ""), Int(secs / 86400)) }
-        if secs >= 3600 { return String(format: NSLocalizedString("resets in %dh", comment: ""), Int(secs / 3600)) }
-        return String(format: NSLocalizedString("resets in %dm", comment: ""), max(1, Int(secs / 60)))
-    }
-
     // MARK: - Derived
 
     /// Continuous fullness 0…1 (48h since the last feeding → empty).

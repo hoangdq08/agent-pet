@@ -21,16 +21,10 @@ struct LimitWindowsView: View {
                 }
                 Spacer()
             }
-            if provider.windows.isEmpty {
-                // Provider without per-window data: fall back to the summary.
-                // No limit at all (text/badge only) means nothing to draw, not "100% used".
-                if let left = provider.fractionLeft {
-                    row(label: provider.windowLabel ?? "", left: left, reset: provider.resetsAt)
-                }
-            } else {
-                ForEach(Array(provider.windows.enumerated()), id: \.offset) { _, w in
-                    row(label: LimitFormat.title(w), left: w.fractionLeft, reset: w.resetsAt)
-                }
+            // A provider with no limit (text/badge only) has no windows, so it
+            // draws no bar rather than a fake "100% used".
+            ForEach(Array(provider.windows.enumerated()), id: \.offset) { _, w in
+                row(label: LimitFormat.title(w), left: w.fractionLeft, reset: w.resetsAt)
             }
         }
     }
