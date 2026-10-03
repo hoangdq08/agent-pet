@@ -349,6 +349,8 @@
 /* Care v5: native limits + to-next-level */
 "≈ %@ tokens to Lv %d" = "≈ %@ token để lên Lv %d";
 "Subscription limits" = "Hạn mức gói";
+"Show %@ in Limits" = "Hiện %@ trong Hạn mức";
+"Hidden providers stay out of the stats card and don't make your pet anxious." = "AI bị ẩn không hiện trên thẻ thống kê và không làm pet lo lắng.";
 "Read directly from your Claude Code / Codex sign-ins." = "Đọc trực tiếp từ đăng nhập Claude Code / Codex của bạn.";
 "Read directly from your Claude Code / Codex sign-ins. None found yet." = "Đọc trực tiếp từ đăng nhập Claude Code / Codex. Chưa tìm thấy.";
 "Connected: adds limits for every other provider." = "Đã kết nối: bổ sung hạn mức cho mọi nhà cung cấp khác.";

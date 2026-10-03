@@ -20,6 +20,18 @@ final class OpenUsageClient: ObservableObject {
         var resetsAt: Date? = nil
         /// Label of the tightest window ("Session", "Weekly"), if known.
         var windowLabel: String? = nil
+        /// Every limit window in provider order (e.g. 5h session, then weekly).
+        var windows: [Window] = []
+    }
+
+    /// One rate-limit window of a provider.
+    struct Window: Equatable {
+        let label: String
+        /// Amount left, 0…1.
+        let fractionLeft: Double
+        var resetsAt: Date? = nil
+        /// Window length in seconds (18000 for a 5h session), if known.
+        var period: TimeInterval? = nil
     }
 
     @Published private(set) var providers: [Provider] = []
@@ -40,7 +52,7 @@ final class OpenUsageClient: ObservableObject {
 
     /// The tightest remaining budget across all providers, 0…1.
     var lowestFractionLeft: Double? {
-        providers.compactMap(\.fractionLeft).min()
+        UsageVisibility.shared.visible(providers).compactMap(\.fractionLeft).min()
     }
 
     /// True when some subscription is nearly exhausted — makes the pet anxious.
@@ -83,6 +95,7 @@ final class OpenUsageClient: ObservableObject {
         var tightest: Double = 2  // track the window with the least left
         var resetsAt: Date?
         var windowLabel: String?
+        var windows: [Window] = []
         for line in lines {
             switch line["type"] as? String {
             case "progress":
@@ -90,6 +103,12 @@ final class OpenUsageClient: ObservableObject {
                       let limit = doubleValue(line["limit"]), limit > 0 else { continue }
                 let left = max(0, min(1, (limit - used) / limit))
                 fractions.append(left)
+                windows.append(Window(
+                    label: line["label"] as? String ?? "",
+                    fractionLeft: left,
+                    resetsAt: resetDate(line["resetsAt"]),
+                    period: doubleValue(line["periodDurationMs"]).map { $0 / 1000 }
+                ))
                 if left < tightest {
                     tightest = left
                     windowLabel = line["label"] as? String
@@ -109,7 +128,8 @@ final class OpenUsageClient: ObservableObject {
             fractionLeft: fractions.min(),
             todayLabel: todayLabel,
             resetsAt: resetsAt,
-            windowLabel: windowLabel
+            windowLabel: windowLabel,
+            windows: windows
         )
     }
 
