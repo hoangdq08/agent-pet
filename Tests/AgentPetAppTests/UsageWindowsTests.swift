@@ -112,4 +112,33 @@ final class UsageWindowsTests: XCTestCase {
         store.setVisible("grok", true)
         XCTAssertEqual(UsageVisibility(defaults: defaults).visible(providers).map(\.id), ["claude", "codex", "grok"])
     }
+
+    /// A nearly spent provider the user hid must not make the pet anxious
+    /// (limitLow) or trigger the rate-limit bubble (lowestFractionLeft).
+    func testHiddenProviderDoesNotDriveMoodOrBubble() throws {
+        let suite = "agentpet.tests.usageVisibility"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let store = UsageVisibility(defaults: defaults)
+        let providers = [
+            OpenUsageClient.Provider(id: "claude", displayName: "Claude", plan: nil, fractionLeft: 0.6, todayLabel: nil),
+            OpenUsageClient.Provider(id: "grok", displayName: "Grok", plan: nil, fractionLeft: 0.05, todayLabel: nil),
+        ]
+        XCTAssertTrue(store.limitLow(providers))
+        XCTAssertEqual(store.lowestFractionLeft(providers) ?? -1, 0.05, accuracy: 0.0001)
+        let engine = ReactiveEngine()
+        XCTAssertNotNil(engine.evaluate(metric: .rateLimit, value: store.lowestFractionLeft(providers)))
+
+        store.setVisible("grok", false)
+        XCTAssertFalse(store.limitLow(providers))
+        XCTAssertEqual(store.lowestFractionLeft(providers) ?? -1, 0.6, accuracy: 0.0001)
+        XCTAssertNil(ReactiveEngine().evaluate(metric: .rateLimit, value: store.lowestFractionLeft(providers)))
+
+        // Everything hidden: nothing to worry about.
+        store.setVisible("claude", false)
+        XCTAssertFalse(store.limitLow(providers))
+        XCTAssertNil(store.lowestFractionLeft(providers))
+    }
 }

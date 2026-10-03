@@ -32,6 +32,17 @@ final class UsageVisibility: ObservableObject {
     func visible(_ providers: [OpenUsageClient.Provider]) -> [OpenUsageClient.Provider] {
         providers.filter { isVisible($0.id) }
     }
+
+    /// Tightest budget left among visible providers. Feeds the rate-limit bubble.
+    func lowestFractionLeft(_ providers: [OpenUsageClient.Provider]) -> Double? {
+        visible(providers).compactMap(\.fractionLeft).min()
+    }
+
+    /// True when a visible provider is nearly spent. Feeds the pet's anxious mood.
+    func limitLow(_ providers: [OpenUsageClient.Provider]) -> Bool {
+        guard let left = lowestFractionLeft(providers) else { return false }
+        return left < 0.15
+    }
 }
 
 /// Text for one limit window: short label ("5h", "7d") and reset time.
