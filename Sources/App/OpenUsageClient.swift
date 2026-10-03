@@ -12,16 +12,19 @@ final class OpenUsageClient: ObservableObject {
         let id: String
         let displayName: String
         let plan: String?
-        /// Smallest "amount left" across the provider's progress lines, 0…1.
-        let fractionLeft: Double?
         /// First text line, e.g. "$1.33 · 4.6M tokens".
         let todayLabel: String?
-        /// When the tightest window resets, if known.
-        var resetsAt: Date? = nil
-        /// Label of the tightest window ("Session", "Weekly"), if known.
-        var windowLabel: String? = nil
         /// Every limit window in provider order (e.g. 5h session, then weekly).
         var windows: [Window] = []
+
+        /// The window with the least left (the first one on a tie).
+        var tightest: Window? { windows.min { $0.fractionLeft < $1.fractionLeft } }
+        /// Smallest "amount left" across the windows, 0…1.
+        var fractionLeft: Double? { tightest?.fractionLeft }
+        /// When the tightest window resets, if known.
+        var resetsAt: Date? { tightest?.resetsAt }
+        /// Label of the tightest window ("Session", "Weekly"), if known.
+        var windowLabel: String? { tightest?.label }
     }
 
     /// One rate-limit window of a provider.
@@ -55,10 +58,9 @@ final class OpenUsageClient: ObservableObject {
         UsageVisibility.shared.lowestFractionLeft(providers)
     }
 
-    /// True when some subscription is nearly exhausted — makes the pet anxious.
+    /// True when some visible subscription is nearly exhausted (pet anxious).
     var limitLow: Bool {
-        guard let left = lowestFractionLeft else { return false }
-        return left < 0.15
+        UsageVisibility.shared.limitLow(providers)
     }
 
     func poll() {
@@ -90,30 +92,19 @@ final class OpenUsageClient: ObservableObject {
         guard let id = json["providerId"] as? String else { return nil }
         let lines = json["lines"] as? [[String: Any]] ?? []
 
-        var fractions: [Double] = []
         var todayLabel: String?
-        var tightest: Double = 2  // track the window with the least left
-        var resetsAt: Date?
-        var windowLabel: String?
         var windows: [Window] = []
         for line in lines {
             switch line["type"] as? String {
             case "progress":
                 guard let used = doubleValue(line["used"]),
                       let limit = doubleValue(line["limit"]), limit > 0 else { continue }
-                let left = max(0, min(1, (limit - used) / limit))
-                fractions.append(left)
                 windows.append(Window(
                     label: line["label"] as? String ?? "",
-                    fractionLeft: left,
+                    fractionLeft: max(0, min(1, (limit - used) / limit)),
                     resetsAt: resetDate(line["resetsAt"]),
                     period: doubleValue(line["periodDurationMs"]).map { $0 / 1000 }
                 ))
-                if left < tightest {
-                    tightest = left
-                    windowLabel = line["label"] as? String
-                    resetsAt = resetDate(line["resetsAt"])
-                }
             case "text":
                 if todayLabel == nil { todayLabel = line["value"] as? String }
             default:
@@ -125,10 +116,7 @@ final class OpenUsageClient: ObservableObject {
             id: id,
             displayName: json["displayName"] as? String ?? id.capitalized,
             plan: json["plan"] as? String,
-            fractionLeft: fractions.min(),
             todayLabel: todayLabel,
-            resetsAt: resetsAt,
-            windowLabel: windowLabel,
             windows: windows
         )
     }

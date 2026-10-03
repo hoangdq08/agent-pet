@@ -90,37 +90,18 @@ final class NativeUsageProbe: ObservableObject {
     /// Parses an `/api/oauth/usage` body.
     nonisolated static func claudeProvider(from json: [String: Any]) -> OpenUsageClient.Provider? {
         // Windows are {"utilization": <percent used>, "resets_at": …}.
-        var fractions: [Double] = []
-        var tightest = 2.0
-        var resetsAt: Date?
-        var windowLabel: String?
         var windows: [OpenUsageClient.Window] = []
         for (key, label, period) in [("five_hour", "Session", 18_000.0), ("seven_day", "Weekly", 604_800.0)] {
             if let window = json[key] as? [String: Any],
                let used = window["utilization"] as? Double {
-                let left = max(0, min(1, (100 - used) / 100))
-                fractions.append(left)
                 windows.append(OpenUsageClient.Window(
-                    label: label, fractionLeft: left,
+                    label: label, fractionLeft: max(0, min(1, (100 - used) / 100)),
                     resetsAt: OpenUsageClient.resetDate(window["resets_at"]), period: period))
-                if left < tightest {
-                    tightest = left
-                    windowLabel = label
-                    resetsAt = OpenUsageClient.resetDate(window["resets_at"])
-                }
             }
         }
-        guard !fractions.isEmpty else { return nil }
-        return OpenUsageClient.Provider(
-            id: "claude",
-            displayName: "Claude",
-            plan: nil,
-            fractionLeft: fractions.min(),
-            todayLabel: nil,
-            resetsAt: resetsAt,
-            windowLabel: windowLabel,
-            windows: windows
-        )
+        guard !windows.isEmpty else { return nil }
+        return OpenUsageClient.Provider(id: "claude", displayName: "Claude", plan: nil,
+                                        todayLabel: nil, windows: windows)
     }
 
     /// Candidate Claude OAuth access tokens, best first: Claude Code (Keychain,
@@ -206,10 +187,6 @@ final class NativeUsageProbe: ObservableObject {
         // windows carry the same plus reset timing.
         let rateLimit = json?["rate_limit"] as? [String: Any]
 
-        var fractions: [Double] = []
-        var tightest = 2.0
-        var resetsAt: Date?
-        var windowLabel: String?
         var windows: [OpenUsageClient.Window] = []
         for (headerName, bodyKey, label) in [
             ("x-codex-primary-used-percent", "primary_window", "Session"),
@@ -220,35 +197,20 @@ final class NativeUsageProbe: ObservableObject {
             let window = rateLimit?[bodyKey] as? [String: Any]
             if used == nil { used = window?["used_percent"] as? Double }
             guard let usedPct = used else { continue }
-            let left = max(0, min(1, (100 - usedPct) / 100))
-            fractions.append(left)
             // The API sends an absolute `reset_at` (epoch) and a relative
             // `reset_after_seconds`; `resets_in_seconds` is kept as a fallback.
-            var windowReset = OpenUsageClient.resetDate(window?["reset_at"])
-            if windowReset == nil,
+            var resetsAt = OpenUsageClient.resetDate(window?["reset_at"])
+            if resetsAt == nil,
                let secs = (window?["reset_after_seconds"] ?? window?["resets_in_seconds"]) as? Double {
-                windowReset = now.addingTimeInterval(secs)
+                resetsAt = now.addingTimeInterval(secs)
             }
             windows.append(OpenUsageClient.Window(
-                label: label, fractionLeft: left, resetsAt: windowReset,
+                label: label, fractionLeft: max(0, min(1, (100 - usedPct) / 100)), resetsAt: resetsAt,
                 period: window?["limit_window_seconds"] as? Double))
-            if left < tightest {
-                tightest = left
-                windowLabel = label
-                resetsAt = windowReset
-            }
         }
-        guard !fractions.isEmpty else { return nil }
-        return OpenUsageClient.Provider(
-            id: "codex",
-            displayName: "Codex",
-            plan: nil,
-            fractionLeft: fractions.min(),
-            todayLabel: nil,
-            resetsAt: resetsAt,
-            windowLabel: windowLabel,
-            windows: windows
-        )
+        guard !windows.isEmpty else { return nil }
+        return OpenUsageClient.Provider(id: "codex", displayName: "Codex", plan: nil,
+                                        todayLabel: nil, windows: windows)
     }
 
     nonisolated private static func codexAuth() -> (token: String, accountId: String?)? {

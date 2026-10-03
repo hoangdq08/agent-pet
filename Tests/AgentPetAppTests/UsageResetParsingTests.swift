@@ -6,9 +6,7 @@ import XCTest
 /// NSNumber exactly as in production.
 final class UsageResetParsingTests: XCTestCase {
 
-    private func json(_ s: String) throws -> [String: Any] {
-        try XCTUnwrap(JSONSerialization.jsonObject(with: Data(s.utf8)) as? [String: Any])
-    }
+    private func json(_ s: String) throws -> [String: Any] { try UsageTestSupport.json(s) }
 
     private func epoch(_ s: String) -> TimeInterval {
         ISO8601DateFormatter().date(from: s)!.timeIntervalSince1970
