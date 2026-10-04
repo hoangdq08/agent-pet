@@ -1,5 +1,8 @@
 pub mod cli;
+pub mod geometry;
 pub mod hooks;
+pub mod jcode;
+pub mod jcode_usage;
 pub mod server;
 pub mod statemap;
 pub mod transcript;
@@ -153,6 +156,56 @@ fn open_settings_impl(app: tauri::AppHandle) {
             Err(e) => dlog(&format!("open_settings: BUILD FAILED: {e}")),
         }
     });
+}
+
+/// True while the left mouse button is held (a drag in progress), so the
+/// off-screen fix waits for the drop instead of fighting the drag.
+fn mouse_down() -> bool {
+    #[cfg(windows)]
+    {
+        #[link(name = "user32")]
+        extern "system" {
+            fn GetAsyncKeyState(vkey: i32) -> i16;
+        }
+        const VK_LBUTTON: i32 = 0x01;
+        // SAFETY: plain Win32 query with no pointers; high bit = currently down.
+        unsafe { (GetAsyncKeyState(VK_LBUTTON) as u16 & 0x8000) != 0 }
+    }
+    #[cfg(not(windows))]
+    {
+        // simplify: no global button query here; the 1 s save cadence
+        // (tick % 33) rarely lands mid-drag. Upgrade: track the drag in JS.
+        false
+    }
+}
+
+/// Plays the default done/waiting sound natively (port of the macOS
+/// SoundSettings, which plays the system sounds Glass/Submarine via NSSound).
+/// The toast itself is sent with `<audio silent="true"/>` (winrt-notification's
+/// default when no sound is set), and the old WebAudio fallback was a 0.13 s
+/// beep at gain 0.05, so on Windows "done" was effectively silent. Playing the
+/// .wav by file name also works when the Windows sound scheme is "No Sounds".
+#[tauri::command]
+fn play_sound(event: String) {
+    #[cfg(windows)]
+    {
+        #[link(name = "winmm")]
+        extern "system" {
+            fn PlaySoundW(psz: *const u16, hmod: *mut std::ffi::c_void, flags: u32) -> i32;
+        }
+        const SND_ASYNC: u32 = 0x0001;
+        const SND_NODEFAULT: u32 = 0x0002;
+        const SND_FILENAME: u32 = 0x0002_0000;
+        let file = if event == "waiting" { "Windows Notify Messaging.wav" } else { "Windows Notify System Generic.wav" };
+        let windir = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into());
+        let path = format!(r"{}\Media\{}", windir, file);
+        let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+        // SAFETY: `wide` is a NUL-terminated UTF-16 path that outlives the call;
+        // SND_ASYNC makes winmm copy what it needs before returning.
+        unsafe { PlaySoundW(wide.as_ptr(), std::ptr::null_mut(), SND_ASYNC | SND_NODEFAULT | SND_FILENAME); }
+    }
+    #[cfg(not(windows))]
+    let _ = event; // Linux build keeps the WebAudio chime (see main.ts)
 }
 
 #[tauri::command]
@@ -419,7 +472,8 @@ pub fn run() {
             get_pet_visible,
             open_popover,
             log_debug,
-            set_hit_rect
+            set_hit_rect,
+            play_sound
         ])
         .setup(|app| {
             server::start(app.handle().clone());
@@ -513,7 +567,27 @@ pub fn run() {
 
                     tick = tick.wrapping_add(1);
                     if tick % 33 == 0 {
-                        if let Ok(p) = win.outer_position() {
+                        if let Ok(mut p) = win.outer_position() {
+                            // A pet dropped past an edge (or outside every
+                            // monitor) comes back onto the nearest work area
+                            // before it is saved there (macOS dev c9a36dd).
+                            // Only once the mouse is released, so an ongoing
+                            // drag is never fought.
+                            if !mouse_down() {
+                                if let (Ok(size), Ok(mons)) = (win.outer_size(), win.available_monitors()) {
+                                    let areas: Vec<geometry::Rect> = mons.iter().map(|m| {
+                                        let wa = m.work_area();
+                                        (wa.position.x, wa.position.y, wa.size.width as i32, wa.size.height as i32)
+                                    }).collect();
+                                    let fixed = geometry::keep_on_screen((p.x, p.y), (size.width as i32, size.height as i32), &areas);
+                                    if fixed != (p.x, p.y) {
+                                        dlog(&format!("pet off screen at ({},{}) -> ({},{})", p.x, p.y, fixed.0, fixed.1));
+                                        let _ = win.set_position(PhysicalPosition::new(fixed.0, fixed.1));
+                                        p.x = fixed.0;
+                                        p.y = fixed.1;
+                                    }
+                                }
+                            }
                             if last_saved != Some((p.x, p.y)) {
                                 write_pos(p.x, p.y);
                                 last_saved = Some((p.x, p.y));
