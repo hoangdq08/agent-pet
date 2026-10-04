@@ -18,6 +18,8 @@ import * as projectpets from "./projectpets";
 // default single pet). Split-pet spawns extra windows with `?project=<id>`.
 const MY_PROJECT = new URLSearchParams(location.search).get("project");
 const IS_MAIN = MY_PROJECT === null;
+// WebView2 (Windows) vs WebKitGTK (Linux): picks the native sound path below.
+const IS_WINDOWS = navigator.userAgent.includes("Windows");
 
 // A project window sets this the moment its project is un-split, so it stops
 // feeding during the brief async gap before Rust closes it (else the main window
@@ -104,8 +106,9 @@ function applyPet() {
 }
 applyPet();
 
-// Simple synthesized chimes (no audio assets needed). Per-event enable, like
-// the macOS SoundSettings (done = high glass-ish, waiting = lower submarine).
+// Per-event enable + custom file, like the macOS SoundSettings. The default
+// sound is a real system sound on Windows (Rust `play_sound`, the macOS
+// Glass/Submarine equivalent); the synthesized chime is only the Linux fallback.
 let audioCtx: AudioContext | null = null;
 function chime(event: "done" | "waiting") {
   const key = event === "done" ? "ap_sound_done" : "ap_sound_waiting";
@@ -117,6 +120,7 @@ function chime(event: "done" | "waiting") {
   if (data) {
     try { void new Audio(data).play(); return; } catch {}
   }
+  if (IS_WINDOWS) { invoke("play_sound", { event }).catch(() => {}); return; }
   try {
     audioCtx = audioCtx || new AudioContext();
     const o = audioCtx.createOscillator();
