@@ -353,6 +353,7 @@
 "Subscription limits" = "Subscription limits";
 "Show %@ in Limits" = "Show %@ in Limits";
 "Hidden providers stay out of the stats card and don't make your pet anxious." = "Hidden providers stay out of the stats card and don't make your pet anxious.";
+"OpenUsage isn't responding, so the providers only it supplies are hidden." = "OpenUsage isn't responding, so the providers only it supplies are hidden.";
 "Read directly from your Claude Code / Codex sign-ins." = "Read directly from your Claude Code / Codex sign-ins.";
 "Read directly from your Claude Code / Codex sign-ins. None found yet." = "Read directly from your Claude Code / Codex sign-ins. None found yet.";
 "Connected: adds limits for every other provider." = "Connected: adds limits for every other provider.";

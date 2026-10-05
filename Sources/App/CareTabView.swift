@@ -233,6 +233,11 @@ struct CareTabView: View {
                         Text("Active").font(.caption).bold().foregroundStyle(.green)
                     }
                 }
+                if usage.lost {
+                    Label("OpenUsage isn't responding, so the providers only it supplies are hidden.",
+                          systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(.orange)
+                }
                 ForEach(NativeUsageProbe.combined()) { p in
                     VStack(alignment: .leading, spacing: 4) {
                         Toggle(isOn: visibility.binding(for: p.id)) {

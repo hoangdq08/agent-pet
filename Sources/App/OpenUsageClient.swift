@@ -40,6 +40,13 @@ final class OpenUsageClient: ObservableObject {
     @Published private(set) var providers: [Provider] = []
     /// True when the last poll reached a running OpenUsage instance.
     @Published private(set) var available = false
+    /// True when OpenUsage answered earlier in this run but not on the latest
+    /// poll, so the providers only it supplies have dropped out. In-memory on
+    /// purpose: someone who never installed (or removed) OpenUsage is not nagged.
+    @Published private(set) var lost = false
+    private var everReached = false
+
+    nonisolated static func isLost(reached: Bool, everSeen: Bool) -> Bool { everSeen && !reached }
 
     private var timer: Timer?
     private static let endpoint = URL(string: "http://127.0.0.1:6736/v1/usage")!
@@ -79,10 +86,12 @@ final class OpenUsageClient: ObservableObject {
                 if let parsed {
                     self.providers = parsed
                     self.available = true
+                    self.everReached = true
                 } else {
                     self.providers = []
                     self.available = false
                 }
+                self.lost = Self.isLost(reached: parsed != nil, everSeen: self.everReached)
             }
         }
         task.resume()
