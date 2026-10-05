@@ -351,6 +351,7 @@
 "Subscription limits" = "订阅额度";
 "Show %@ in Limits" = "在额度中显示 %@";
 "Hidden providers stay out of the stats card and don't make your pet anxious." = "隐藏的服务不会出现在统计卡片中，也不会让宠物焦虑。";
+"OpenUsage isn't responding, so the providers only it supplies are hidden." = "OpenUsage 没有响应，因此只由它提供的服务已被隐藏。";
 "Read directly from your Claude Code / Codex sign-ins." = "直接从你的 Claude Code / Codex 登录读取。";
 "Read directly from your Claude Code / Codex sign-ins. None found yet." = "直接从你的 Claude Code / Codex 登录读取。暂未找到。";
 "Connected: adds limits for every other provider." = "已连接：补充其他所有服务商的额度。";
