@@ -106,6 +106,23 @@ fn handle_approval(app: AppHandle, body: String, req: tiny_http::Request) {
 }
 
 pub fn start(app: AppHandle) {
+    // jcode token usage worker: must exist before the queue replay below so
+    // replayed jcode turns are measured too.
+    {
+        let app = app.clone();
+        let tx = crate::jcode_usage::spawn_worker(
+            |session| {
+                let (home, _) = crate::hooks::jcode_home()?;
+                crate::jcode_usage::session_path(session, &home)
+            },
+            move |session, project, tokens| {
+                let _ = app.emit("agent-tokens", serde_json::json!({
+                    "agent": "jcode", "session": session, "project": project, "tokens": tokens,
+                }));
+            },
+        );
+        let _ = jcode_jobs().set(Mutex::new(tx));
+    }
     // Replay events queued while the app was closed (name order = time order).
     if let Some(dir) = crate::cli::queue_dir() {
         if let Ok(entries) = std::fs::read_dir(&dir) {
@@ -148,6 +165,29 @@ fn str_of<'a>(v: &'a Value, key: &str) -> &'a str {
     v.get(key).and_then(|x| x.as_str()).unwrap_or("")
 }
 
+/// The jcode usage worker (see jcode_usage.rs), started with the listener.
+fn jcode_jobs() -> &'static OnceLock<Mutex<Sender<crate::jcode_usage::Job>>> {
+    static J: OnceLock<Mutex<Sender<crate::jcode_usage::Job>>> = OnceLock::new();
+    &J
+}
+
+/// jcode's hooks carry no token counts: measure the session files at turn
+/// start (baseline) and turn end (delta) and feed the pet like Claude/Codex.
+fn track_jcode_usage(event: &str, session: &str, project: &str) {
+    if event == "session_end" {
+        crate::jcode_usage::forget(session);
+        return;
+    }
+    let Some(is_end) = crate::jcode_usage::usage_action(event) else { return };
+    if let Some(tx) = jcode_jobs().get() {
+        let _ = tx.lock().unwrap_or_else(|e| e.into_inner()).send(crate::jcode_usage::Job {
+            session: session.to_string(),
+            project: project.to_string(),
+            is_end,
+        });
+    }
+}
+
 fn handle_event(app: &AppHandle, body: &str) {
     let Ok(v) = serde_json::from_str::<Value>(body) else { return };
     let agent = str_of(&v, "agent").to_string();
@@ -162,6 +202,10 @@ fn handle_event(app: &AppHandle, body: &str) {
     let terminal_program = str_of(&v, "terminalProgram").to_string();
     let terminal_focus_url = str_of(&v, "terminalFocusUrl").to_string();
     let ts = v.get("ts").and_then(|x| x.as_u64()).unwrap_or(0);
+
+    if agent == "jcode" {
+        track_jcode_usage(&event, &session, &project);
+    }
 
     if crate::statemap::is_session_end(&agent, &event) {
         let _ = app.emit("agent-end", session);
