@@ -162,6 +162,8 @@ export function agentLabel(kind: string): string {
     case "antigravity": return "Antigravity";
     case "copilot": return "Copilot";
     case "kiro": return "Kiro";
+    case "grok": return "Grok";
+    case "jcode": return "jcode";
     case "hermes": return "Hermes";
     case "openclaw": return "OpenClaw";
     // A custom agent hooked via `--agent <name>`: show its own name, not a

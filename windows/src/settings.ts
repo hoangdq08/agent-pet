@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
-import { exit } from "@tauri-apps/plugin-process";
+import { exit, relaunch } from "@tauri-apps/plugin-process";
 import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { loadCatalog, savedSlug, saveSlug, getLibrary, addToLibrary, removeFromLibrary, petDisplayName, renamePet, type Pet, type LibPet } from "./catalog";
 import { t, getLang, setLang, type Lang } from "./i18n";
@@ -12,8 +12,12 @@ import { slice, type Rect } from "./pet";
 import * as care from "./care";
 import * as usage from "./usage";
 import * as projectpets from "./projectpets";
+import * as projectnames from "./projectnames";
+import * as backup from "./backup";
 import * as sync from "./sync";
 import * as history from "./history";
+import * as limits from "./limits";
+import { agentLabel } from "./state";
 
 // ------------------------------------------------------------- segmented ----
 // macOS-style segmented controls: <span class="seg" data-key data-default>.
@@ -43,7 +47,7 @@ function initTabs() {
       document.querySelectorAll<HTMLElement>(".page").forEach((p) => {
         p.classList.toggle("sel", p.dataset.page === b.dataset.tab);
       });
-      if (b.dataset.tab === "care") { renderCare(); renderSync(); }
+      if (b.dataset.tab === "care") { renderCare(); renderSync(); void refreshLimits(); }
       if (b.dataset.tab === "history") renderHistory();
     };
   });
@@ -123,6 +127,13 @@ function renderCare() {
   setTxt("care-today-sub", `${s.mealsToday} ${t("sessions")}`);
   const money = (v: number) => `$${v.toFixed(2)}`;
   setTxt("care-cost", `${t("Today")} ${money(usage.todayCostUSD())} · ${t("Month")} ${money(usage.monthlyCostUSD())}`);
+  const agentsEl = document.getElementById("care-agents");
+  if (agentsEl) {
+    const rows = usage.byAgent();
+    agentsEl.innerHTML = rows.length
+      ? rows.map((a) => `<div class="care-charthead"><span>${esc(agentLabel(a.agent))}</span><span class="dim">${fmtNum(a.today)} · ${fmtNum(a.month)}</span></div>`).join("")
+      : `<div class="care-charthead"><span class="dim">—</span></div>`;
+  }
   setTxt("care-streak", String(s.streakDays));
   setTxt("care-lifetime", fmtNum(s.totalTokens));
   setTxt("care-sessions", String(s.totalMeals));
@@ -167,9 +178,41 @@ function setupRename() {
 }
 setupRename();
 
+// ---- subscription limits (mac CareTabView "Subscription limits") ----
+function renderLimits(providers: limits.LimitProvider[]) {
+  const list = document.getElementById("limits-list");
+  const sub = document.getElementById("limits-sub");
+  if (!list) return;
+  if (sub) sub.textContent = t(providers.length
+    ? "Read directly from your Claude Code / jcode sign-in."
+    : "Read directly from your Claude Code / jcode sign-in. None found yet.");
+  const escH = (s: string) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+  list.innerHTML = providers.map((p) => {
+    const on = limits.isVisible(p.id);
+    const rows = on ? limits.windowRowsHtml(p, false) : "";
+    return `<div class="limit-prov">
+      <label class="row tight"><span>${escH(t("Show %@ in Limits").replace("%@", p.display_name))}</span>
+        <input type="checkbox" data-limit="${escH(p.id)}" ${on ? "checked" : ""} /></label>
+      ${rows}
+    </div>`;
+  }).join("");
+  list.querySelectorAll<HTMLInputElement>("input[data-limit]").forEach((box) => {
+    box.onchange = () => {
+      limits.setVisible(box.dataset.limit!, box.checked);
+      renderLimits(limits.cached());
+    };
+  });
+}
+async function refreshLimits() {
+  renderLimits(limits.cached());
+  renderLimits(await limits.refreshIfStale());
+}
+
 // Refresh when the pet window feeds the pet, and periodically for the hunger clock.
 listen("care-updated", () => { if (document.querySelector('.page[data-page="care"].sel')) renderCare(); });
-setInterval(() => { if (document.querySelector('.page[data-page="care"].sel')) renderCare(); }, 30_000);
+setInterval(() => {
+  if (document.querySelector('.page[data-page="care"].sel')) { renderCare(); renderLimits(limits.cached()); }
+}, 30_000);
 
 // ---- web profile / leaderboard sign-in ----
 function renderSync() {
@@ -624,6 +667,7 @@ const MSG_AGENTS: [string, string][] = [
   ["all", "All agents"], ["claude", "Claude Code"], ["codex", "Codex"], ["gemini", "Gemini CLI"],
   ["cursor", "Cursor"], ["opencode", "opencode"], ["windsurf", "Windsurf"],
   ["antigravity", "Antigravity"], ["copilot", "GitHub Copilot"], ["kiro", "Kiro CLI"],
+  ["grok", "Grok Build"], ["jcode", "jcode"],
 ];
 
 function initBubble() {
@@ -740,6 +784,41 @@ function initBubble() {
   split.checked = projectpets.splitEnabled();
   split.onchange = () => { projectpets.setSplit(split.checked); renderSplitList(); emit("split-changed"); };
   renderSplitList();
+  initProjectNames();
+}
+
+// Friendly display names for projects. Saved on change/Enter; empty = folder name.
+function initProjectNames() {
+  const list = document.getElementById("projnames-list") as HTMLElement;
+  list.innerHTML = "";
+  const projects = usage.knownProjects();
+  if (!projects.length) {
+    const p = document.createElement("div");
+    p.className = "row";
+    p.innerHTML = `<span class="cap"></span>`;
+    (p.firstElementChild as HTMLElement).textContent = t("No projects yet. Use an agent in a project first.");
+    list.appendChild(p);
+    return;
+  }
+  for (const proj of projects) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const folder = document.createElement("span");
+    folder.className = "rt";
+    folder.textContent = proj.name;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.autocomplete = "off";
+    input.maxLength = 60;
+    input.placeholder = t("Folder name");
+    input.value = projectnames.customName(proj.id);
+    const save = () => { projectnames.setProjectName(proj.id, input.value); emit("bubble-changed", null); };
+    input.addEventListener("change", save);
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { save(); input.blur(); } });
+    row.appendChild(folder);
+    row.appendChild(input);
+    list.appendChild(row);
+  }
 }
 
 // -------------------------------------------------- bubble display + layout ----
@@ -1079,6 +1158,8 @@ function playSound(ev: "done" | "waiting") {
   if (data) {
     try { void new Audio(data).play(); return; } catch {}
   }
+  // Same default as the pet window: the native Windows system sound.
+  if (navigator.userAgent.includes("Windows")) { invoke("play_sound", { event: ev }).catch(() => {}); return; }
   try {
     settingsAudioCtx = settingsAudioCtx || new AudioContext();
     const o = settingsAudioCtx.createOscillator();
@@ -1177,6 +1258,10 @@ function applyStatic() {
   set("tab-pet", "Pet");
   set("tab-bubble", "Bubble");
   set("tab-about", "About");
+  set("t-care-agents", "By agent");
+  set("t-care-agents-sub", "Today · Month");
+  set("t-limits-head", "Subscription limits");
+  set("t-limits-help", "Hidden providers stay out of the stats card and don't make your pet anxious.");
   // general
   set("t-lang", "Language");
   set("t-lang2", "Language");
@@ -1239,6 +1324,13 @@ function applyStatic() {
   set("t-reactive-sub", "The pet reacts to token usage, streaks, hunger, and busy sessions.");
   set("t-split", "Split pets by project");
   set("t-split-sub", "Give a project its own pet window; the rest stay on the main pet.");
+  set("t-backup", "Backup");
+  set("t-backup-export", "Export data");
+  set("t-backup-export-sub", "Save your pet level, pets and settings to a file.");
+  set("t-backup-import", "Import data");
+  set("t-backup-import-sub", "Restore from a file. This replaces your current data.");
+  set("t-projnames", "Project names");
+  set("t-projnames-sub", "Show a friendlier name instead of the folder name in the bubble and notifications. Leave empty to use the folder name.");
   set("t-display", "Display");
   set("t-rows", "Rows");
   set("o-bm-list", "All rows");
@@ -1333,6 +1425,61 @@ function applyStatic() {
   (document.getElementById("bw-search") as HTMLInputElement).placeholder = t("Search pets");
 }
 
+// ------------------------------------------------------- backup / restore ----
+function initBackup() {
+  const status = document.getElementById("backup-status") as HTMLElement;
+  const say = (msg: string, bad = false) => {
+    status.style.display = "";
+    status.textContent = msg;
+    status.style.color = bad ? "#ff6b6b" : "";
+  };
+
+  (document.getElementById("backup-export") as HTMLButtonElement).onclick = async () => {
+    try {
+      const ver = await getVersion().catch(() => undefined);
+      const file = backup.buildBackup(ver);
+      const blob = new Blob([JSON.stringify(file)], { type: "application/json" });
+      const a = document.createElement("a");
+      const day = new Date().toISOString().slice(0, 10);
+      a.href = URL.createObjectURL(blob);
+      a.download = `agentpet-backup-${day}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+      say(`${t("Exported")}: ${Object.keys(file.data).length} ${t("items")} (${(blob.size / 1024).toFixed(0)} KB)`);
+    } catch (e) {
+      say(`${t("Export failed")}: ${(e as Error).message}`, true);
+    }
+  };
+
+  const pick = document.createElement("input");
+  pick.type = "file";
+  pick.accept = "application/json,.json";
+  pick.style.display = "none";
+  document.body.appendChild(pick);
+  (document.getElementById("backup-import") as HTMLButtonElement).onclick = () => pick.click();
+  pick.onchange = async () => {
+    const f = pick.files?.[0];
+    pick.value = "";
+    if (!f) return;
+    try {
+      const parsed = backup.parseBackup(await f.text());
+      const when = parsed.exportedAt ? parsed.exportedAt.slice(0, 16).replace("T", " ") : "?";
+      const ok = confirm(
+        `${t("Restore this backup?")}\n${f.name}\n${when} · ${Object.keys(parsed.data).length} ${t("items")}\n\n` +
+        t("Your current data will be replaced. Export first if you want to keep it."));
+      if (!ok) return;
+      const n = backup.applyBackup(parsed);
+      say(`${t("Restored")}: ${n} ${t("items")}. ${t("Restarting…")}`);
+      // Every window caches state in memory: relaunch so they all reload it.
+      setTimeout(() => { void relaunch(); }, 800);
+    } catch (e) {
+      say(`${t("Import failed")}: ${t((e as Error).message)}`, true);
+    }
+  };
+}
+
 // ------------------------------------------------- version / quit / links ----
 function initMisc() {
   getVersion().then((v) => {
@@ -1399,6 +1546,7 @@ initAutostart();
 initSliders();
 initSegs();
 initMisc();
+initBackup();
 initDemo();
 initOnboarding();
 
