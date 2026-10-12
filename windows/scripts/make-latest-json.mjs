@@ -20,7 +20,9 @@ if (!exe || !sig) {
 }
 
 const signature = readFileSync(join(nsisDir, sig), "utf8").trim();
-const url = `https://github.com/ntd4996/agentpet/releases/download/${tag}/${encodeURIComponent(exe)}`;
+// The repo the release lives in (a fork publishes to itself, not upstream).
+const repo = process.env.GITHUB_REPOSITORY || "ntd4996/agentpet";
+const url = `https://github.com/${repo}/releases/download/${tag}/${encodeURIComponent(exe)}`;
 
 const latest = {
   version,

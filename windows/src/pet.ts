@@ -20,11 +20,12 @@ const STATE_ROW: Record<string, number> = {
   celebrate: 4,  // jumping , the 3s burst when all work completes
 };
 
-// Frame rate varies by mood (faster while working), like the macOS app.
+// Frame rate varies by mood (faster while working), like the macOS app. Slowed
+// from 8/8/4 so an 8-frame row no longer loops in about one second.
 const STATE_FPS: Record<string, number> = {
-  working: 8,
-  celebrate: 8,
-  waiting: 4,
+  working: 5,
+  celebrate: 5,
+  waiting: 3,
   done: 3,
   idle: 3,
   registered: 3,
@@ -88,7 +89,6 @@ export class Pet {
   private clips: Rect[][] = [];
   private frame = 0;
   private row = 0;
-  private lastTick = 0;
   private fps = 3;
   /// Unused space above the sprite, as a fraction of canvas height. The bubble
   /// uses it to sit right above the pet's head instead of the canvas top.
@@ -96,20 +96,20 @@ export class Pet {
   /// Last drawn sprite rect in backing-store pixels , the pet's true bounds.
   spriteRect: { x: number; y: number; w: number; h: number } | null = null;
 
-  /// True when a CSS-pixel point inside the canvas hits the SPRITE (alpha
-  /// test), so clicks on the empty area around the pet don't drag the window.
+  /// True when a CSS-pixel point inside the canvas is on the pet: inside the
+  /// sprite's box plus a small margin. The box (not per-pixel alpha) because
+  /// pixel-art sprites are full of transparent gaps between ears, arms and
+  /// body; an alpha test made most grabs fall through to the window below,
+  /// so the pet seemed impossible to move. Clicks outside the box still pass
+  /// through (the Rust hit rect is the same box).
   hitTest(cssX: number, cssY: number): boolean {
     const r = this.spriteRect;
     if (!r) return false;
     const kx = this.canvas.width / (this.canvas.clientWidth || 1);
     const ky = this.canvas.height / (this.canvas.clientHeight || 1);
     const x = cssX * kx, y = cssY * ky;
-    if (x < r.x || x > r.x + r.w || y < r.y || y > r.y + r.h) return false;
-    try {
-      return this.ctx.getImageData(Math.floor(x), Math.floor(y), 1, 1).data[3] > 16;
-    } catch {
-      return true; // tainted canvas (no CORS): fall back to the rect test
-    }
+    const m = 4 * kx;
+    return x >= r.x - m && x <= r.x + r.w + m && y >= r.y - m && y <= r.y + r.h + m;
   }
 
   constructor(private canvas: HTMLCanvasElement) {
@@ -117,7 +117,7 @@ export class Pet {
     if (!c) throw new Error("no 2d context");
     this.ctx = c;
     this.ctx.imageSmoothingEnabled = false;
-    requestAnimationFrame((t) => this.loop(t));
+    this.loop();
   }
 
   /// Widest frame of each clip , scale is computed per CLIP (not per frame)
@@ -135,6 +135,7 @@ export class Pet {
       this.clipMaxW = this.clips.map((clip) => Math.max(...clip.map((r) => r.w)));
       this.frame = 0;
       this.loaded = true;
+      this.draw();
     };
     // A pre-CORS cached copy makes the crossOrigin load fail , retry plain
     // (displayable, but slicing falls back to the fixed grid).
@@ -150,6 +151,7 @@ export class Pet {
         this.clips = [];
         this.frame = 0;
         this.loaded = true;
+        this.draw();
       };
       plain.src = spritesheetUrl;
     };
@@ -167,6 +169,11 @@ export class Pet {
     const bound = parseInt(localStorage.getItem(`ap_bind_${state}`) ?? "", 10);
     const row = Number.isFinite(bound) && bound >= 0 ? bound : (STATE_ROW[state] ?? 0);
     if (row !== this.row) { this.row = row; this.frame = 0; }
+    // Per-row override (`ap_fps_row_<row>`, 1-30 fps) so one clip can run slower
+    // than its mood's default without changing every other pet or mood. It rides
+    // in the backup file, so a pet import can carry it.
+    const rowFps = parseFloat(localStorage.getItem(`ap_fps_row_${row}`) ?? "");
+    if (Number.isFinite(rowFps) && rowFps >= 1 && rowFps <= 30) this.fps = rowFps;
   }
 
   /// The frames of the current row (clamped to what the sheet actually has).
@@ -175,13 +182,14 @@ export class Pet {
     return this.clips[Math.min(this.row, this.clips.length - 1)];
   }
 
-  private loop(t: number) {
-    if (this.loaded && t - this.lastTick > 1000 / this.fps) {
-      this.lastTick = t;
+  // Paced by the clip's fps (3-5) instead of a 60Hz requestAnimationFrame that
+  // woke the renderer ~12x more often than it drew. Skips while hidden.
+  private loop() {
+    if (this.loaded && !document.hidden) {
       this.frame++;
       this.draw();
     }
-    requestAnimationFrame((n) => this.loop(n));
+    window.setTimeout(() => this.loop(), 1000 / this.fps);
   }
 
   private draw() {
