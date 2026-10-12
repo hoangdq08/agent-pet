@@ -20,11 +20,12 @@ const STATE_ROW: Record<string, number> = {
   celebrate: 4,  // jumping , the 3s burst when all work completes
 };
 
-// Frame rate varies by mood (faster while working), like the macOS app.
+// Frame rate varies by mood (faster while working), like the macOS app. Slowed
+// from 8/8/4 so an 8-frame row no longer loops in about one second.
 const STATE_FPS: Record<string, number> = {
-  working: 8,
-  celebrate: 8,
-  waiting: 4,
+  working: 5,
+  celebrate: 5,
+  waiting: 3,
   done: 3,
   idle: 3,
   registered: 3,
