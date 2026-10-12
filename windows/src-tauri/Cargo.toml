@@ -33,3 +33,10 @@ tokio = { version = "1", features = ["time"] }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+
+# Smaller binary. Runtime speed is unchanged (the app is I/O bound), CI build is slower.
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
