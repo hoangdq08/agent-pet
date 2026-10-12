@@ -34,12 +34,6 @@ struct HitRect {
     y: f64,
     w: f64,
     h: f64,
-    /// The sprite alone (no bubble), used to keep the pet on screen so a
-    /// bubble above it may hang off the top edge instead of pinning the pet.
-    sx: f64,
-    sy: f64,
-    sw: f64,
-    sh: f64,
 }
 
 /// Append a line to %APPDATA%/AgentPet/debug.log , lightweight field
@@ -87,10 +81,10 @@ fn write_pos(x: i32, y: i32) {
 /// Report the pet's opaque rectangle (physical px, window-relative) so empty
 /// transparent areas of the overlay let clicks pass through to apps below.
 #[tauri::command]
-fn set_hit_rect(app: tauri::AppHandle, x: f64, y: f64, w: f64, h: f64, sx: f64, sy: f64, sw: f64, sh: f64) {
+fn set_hit_rect(app: tauri::AppHandle, x: f64, y: f64, w: f64, h: f64) {
     if let Some(state) = app.try_state::<Mutex<HitRect>>() {
         if let Ok(mut r) = state.lock() {
-            *r = HitRect { x, y, w, h, sx, sy, sw, sh };
+            *r = HitRect { x, y, w, h };
         }
     }
 }
@@ -734,7 +728,7 @@ pub fn run() {
                                     }).collect();
                                     let visible = handle
                                         .try_state::<Mutex<HitRect>>()
-                                        .and_then(|s| s.lock().ok().map(|r| (r.sx, r.sy, r.sw, r.sh)))
+                                        .and_then(|s| s.lock().ok().map(|r| (r.x, r.y, r.w, r.h)))
                                         .unwrap_or((0.0, 0.0, 0.0, 0.0));
                                     let fixed = geometry::keep_visible_on_screen((p.x, p.y), (size.width as i32, size.height as i32), visible, &areas);
                                     if fixed != (p.x, p.y) {
