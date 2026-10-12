@@ -187,6 +187,38 @@ fn mouse_down() -> bool {
     }
 }
 
+/// Drags the pet window by polling the cursor while the left button is held.
+/// `startDragging` (a native caption drag) makes Windows refuse to move a
+/// window's top edge above the screen top, so the pet's empty top margin
+/// (bubble room) kept it from reaching the top of the screen. Moving the
+/// window ourselves has no such limit; the drop-time clamp in the background
+/// loop still keeps the sprite itself on a screen.
+#[tauri::command]
+fn drag_pet(app: tauri::AppHandle) {
+    let Some(win) = app.get_webview_window("pet") else { return };
+    #[cfg(windows)]
+    {
+        let (Ok(c0), Ok(w0)) = (app.cursor_position(), win.outer_position()) else {
+            let _ = win.start_dragging();
+            return;
+        };
+        std::thread::spawn(move || {
+            while mouse_down() {
+                if let Ok(c) = app.cursor_position() {
+                    let x = w0.x + (c.x - c0.x).round() as i32;
+                    let y = w0.y + (c.y - c0.y).round() as i32;
+                    let _ = win.set_position(PhysicalPosition::new(x, y));
+                }
+                std::thread::sleep(Duration::from_millis(8));
+            }
+        });
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = win.start_dragging();
+    }
+}
+
 /// Plays the default done/waiting sound natively (port of the macOS
 /// SoundSettings, which plays the system sounds Glass/Submarine via NSSound).
 /// The toast itself is sent with `<audio silent="true"/>` (winrt-notification's
@@ -592,6 +624,7 @@ pub fn run() {
             stats_resized,
             log_debug,
             set_hit_rect,
+            drag_pet,
             play_sound,
             get_limits
         ])

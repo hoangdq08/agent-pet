@@ -1,6 +1,5 @@
 import { listen, emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Pet } from "./pet";
 import { SessionStore, aggregateMood, type AgentEventPayload } from "./state";
 import { BubbleRenderer } from "./bubble";
@@ -458,7 +457,7 @@ document.addEventListener("mousedown", async (e) => {
   // Bubble controls (fold, carousel dots, dismiss, Warp-focus rows) keep their clicks.
   if ((e.target as HTMLElement).closest("button, a, input, .car-dot, .focusable, [data-nodrag]")) return;
   emit("popover-close", null);
-  await getCurrentWindow().startDragging();
+  await invoke("drag_pet");
 });
 document.addEventListener("contextmenu", (e) => {
   e.preventDefault();
