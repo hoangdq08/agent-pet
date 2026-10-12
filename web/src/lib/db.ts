@@ -58,6 +58,12 @@ export async function ensureSchema(db: any): Promise<void> {
   try { await db.prepare("ALTER TABLE care_pets ADD COLUMN thumb TEXT").run(); } catch {}
   try { await db.prepare("ALTER TABLE care_pets ADD COLUMN week TEXT").run(); } catch {}
   try { await db.prepare("ALTER TABLE care_pets ADD COLUMN achievements TEXT").run(); } catch {}
+  // usage_daily gained cost + token breakdown. Additive + idempotent; old rows stay 0.
+  for (const c of ["cost_usd REAL", "input_tokens INTEGER", "output_tokens INTEGER", "cache_read INTEGER", "cache_write INTEGER"]) {
+    try { await db.prepare(`ALTER TABLE usage_daily ADD COLUMN ${c} NOT NULL DEFAULT 0`).run(); } catch {}
+  }
+  // One row per day of the admin counters, so /admin can chart trends.
+  try { await db.prepare("CREATE TABLE IF NOT EXISTS admin_snapshots (day TEXT PRIMARY KEY, data TEXT NOT NULL, created_at INTEGER NOT NULL)").run(); } catch {}
   ready = true;
 }
 
