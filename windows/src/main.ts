@@ -495,10 +495,15 @@ function reportHitRect() {
   const top = Math.min(...rects.map((r) => r.top));
   const right = Math.max(...rects.map((r) => r.right));
   const bottom = Math.max(...rects.map((r) => r.bottom));
-  const sig = [left, top, right, bottom].map((v) => Math.round(v)).join(",");
+  // Sprite-only box: it is always the last rect pushed above.
+  const sp = rects[rects.length - 1];
+  const sig = [left, top, right, bottom, sp.left, sp.top, sp.right, sp.bottom].map((v) => Math.round(v)).join(",");
   if (sig === lastHitSig) return;
   lastHitSig = sig;
-  invoke("set_hit_rect", { x: left * d, y: top * d, w: (right - left) * d, h: (bottom - top) * d })
+  invoke("set_hit_rect", {
+    x: left * d, y: top * d, w: (right - left) * d, h: (bottom - top) * d,
+    sx: sp.left * d, sy: sp.top * d, sw: (sp.right - sp.left) * d, sh: (sp.bottom - sp.top) * d,
+  })
     .catch((err) => invoke("log_debug", { msg: `set_hit_rect failed: ${err}` }).catch(() => {}));
 }
 new ResizeObserver(reportHitRect).observe(petRoot);
