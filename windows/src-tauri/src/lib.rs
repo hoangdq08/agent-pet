@@ -547,7 +547,11 @@ pub fn run() {
                                         let wa = m.work_area();
                                         (wa.position.x, wa.position.y, wa.size.width as i32, wa.size.height as i32)
                                     }).collect();
-                                    let fixed = geometry::keep_on_screen((p.x, p.y), (size.width as i32, size.height as i32), &areas);
+                                    let visible = handle
+                                        .try_state::<Mutex<HitRect>>()
+                                        .and_then(|s| s.lock().ok().map(|r| (r.x, r.y, r.w, r.h)))
+                                        .unwrap_or((0.0, 0.0, 0.0, 0.0));
+                                    let fixed = geometry::keep_visible_on_screen((p.x, p.y), (size.width as i32, size.height as i32), visible, &areas);
                                     if fixed != (p.x, p.y) {
                                         dlog(&format!("pet off screen at ({},{}) -> ({},{})", p.x, p.y, fixed.0, fixed.1));
                                         let _ = win.set_position(PhysicalPosition::new(fixed.0, fixed.1));

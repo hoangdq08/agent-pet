@@ -40,6 +40,32 @@ pub fn keep_on_screen(origin: (i32, i32), size: (i32, i32), areas: &[Rect]) -> (
     clamp_into(origin, size, areas[i])
 }
 
+/// Like `keep_on_screen`, but only the part of the window that is actually
+/// drawn (`visible`: x, y, w, h relative to the window origin) has to stay on a
+/// screen. The pet window is 260x320 with a mostly transparent margin, so
+/// requiring the whole window on screen kept shoving a pet that was dropped
+/// next to an edge back by a few pixels (and again on every drop). With the
+/// visible rect the transparent margin may hang off the screen, and the move is
+/// only as large as needed to bring the sprite back. An empty/unknown rect
+/// falls back to the whole window.
+pub fn keep_visible_on_screen(
+    origin: (i32, i32),
+    size: (i32, i32),
+    visible: (f64, f64, f64, f64),
+    areas: &[Rect],
+) -> (i32, i32) {
+    let (vx, vy, vw, vh) = visible;
+    if !(vw > 0.0 && vh > 0.0) {
+        return keep_on_screen(origin, size, areas);
+    }
+    // Clamp inside the visible rect's own frame, then translate back.
+    let vis = (vx.floor() as i32, vy.floor() as i32);
+    let vsize = (vw.ceil() as i32, vh.ceil() as i32);
+    let vorigin = (origin.0 + vis.0, origin.1 + vis.1);
+    let moved = keep_on_screen(vorigin, vsize, areas);
+    (moved.0 - vis.0, moved.1 - vis.1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -80,6 +106,39 @@ mod tests {
     #[test]
     fn window_taller_than_screen_keeps_the_bottom() {
         assert_eq!(clamp_into((0, -50), (260, 1000), (0, 0, 1600, 900)), (0, 900 - 1000));
+    }
+
+    // Sprite as the app reports it: ~38..222 across, ~97..223 down in the 260x320 window.
+    const VIS: (f64, f64, f64, f64) = (38.0, 97.0, 184.0, 126.0);
+
+    #[test]
+    fn transparent_margin_may_hang_off_the_edge() {
+        // Window x=2960 (20 px past 3200-260) but the sprite (x 2998..3182) is on screen: leave it.
+        assert_eq!(keep_visible_on_screen((2960, 24), PET, VIS, &MONS), (2960, 24));
+    }
+
+    #[test]
+    fn sprite_past_the_edge_is_pulled_back_only_as_far_as_needed() {
+        // Window x=3100: sprite would span 3138..3322, so it moves left by 122 to end at 3200.
+        assert_eq!(keep_visible_on_screen((3100, 24), PET, VIS, &MONS), (2978, 24));
+    }
+
+    #[test]
+    fn sprite_below_the_bottom_comes_back() {
+        // Sprite y = 800+97 .. 800+223 = 897..1023, 123 px too low.
+        assert_eq!(keep_visible_on_screen((400, 800), PET, VIS, &MONS), (400, 677));
+    }
+
+    #[test]
+    fn unknown_visible_rect_falls_back_to_the_whole_window() {
+        assert_eq!(keep_visible_on_screen((3100, 100), PET, (0.0, 0.0, 0.0, 0.0), &MONS), (3200 - 260, 100));
+    }
+
+    #[test]
+    fn visible_clamp_never_moves_a_correct_pet() {
+        for x in [0, 500, 1340, 1600, 2000, 2940] {
+            assert_eq!(keep_visible_on_screen((x, 100), PET, VIS, &MONS), (x, 100), "x={x}");
+        }
     }
 
     #[test]
