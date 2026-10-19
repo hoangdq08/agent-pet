@@ -30,6 +30,10 @@ export const GET: APIRoute = async ({ cookies, url }) => {
   const reqDays = Number(url.searchParams.get("days"));
   const days = [7, 30, 90, 365].includes(reqDays) ? reqDays : 30;
   const since = new Date(Date.now() - 2 * days * 86_400_000).toISOString().slice(0, 10);
+  // Month-to-date for the forecast card: `daily` may start after the 1st (e.g. 7d range).
+  // ?month=YYYY-MM is the browser's local month (days are stored in the app's local time).
+  const reqMonth = url.searchParams.get("month") || "";
+  const monthStart = (/^\d{4}-\d{2}$/.test(reqMonth) ? reqMonth : new Date().toISOString().slice(0, 7)) + "-01";
 
   const where = ["user_id=?"];
   const args: any[] = [user.id];
@@ -38,7 +42,7 @@ export const GET: APIRoute = async ({ cookies, url }) => {
   const W = where.join(" AND ");
   const SUMS = "SUM(tokens) AS tokens, SUM(sessions) AS sessions, SUM(cost_usd) AS cost, SUM(input_tokens) AS input, SUM(output_tokens) AS output, SUM(cache_read) AS cacheRead, SUM(cache_write) AS cacheWrite";
 
-  const [projects, agents, daily, monthly, totals, topProjects] = await Promise.all([
+  const [projects, agents, daily, monthly, totals, topProjects, mtd] = await Promise.all([
     db.prepare("SELECT project_id AS id, project_name AS name, SUM(tokens) AS tokens, SUM(sessions) AS sessions, SUM(cost_usd) AS cost FROM usage_daily WHERE user_id=? GROUP BY project_id ORDER BY tokens DESC LIMIT 200").bind(user.id).all(),
     db.prepare("SELECT agent, SUM(tokens) AS tokens, SUM(cost_usd) AS cost FROM usage_daily WHERE user_id=? GROUP BY agent ORDER BY tokens DESC").bind(user.id).all(),
     db.prepare(`SELECT day, agent, ${SUMS} FROM usage_daily WHERE ${W} AND day>=? GROUP BY day, agent ORDER BY day`).bind(...args, since).all(),
@@ -47,9 +51,11 @@ export const GET: APIRoute = async ({ cookies, url }) => {
     // Heaviest projects inside the selected window (for "top project" + cost per project).
     db.prepare(`SELECT project_id AS id, project_name AS name, SUM(tokens) AS tokens, SUM(cost_usd) AS cost FROM usage_daily WHERE ${W} AND day>=? GROUP BY project_id ORDER BY tokens DESC LIMIT 10`)
       .bind(...args, new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)).all(),
+    db.prepare(`SELECT SUM(tokens) AS tokens, SUM(cost_usd) AS cost FROM usage_daily WHERE ${W} AND day>=?`).bind(...args, monthStart).first(),
   ]);
 
   const t: any = totals || {};
+  const m: any = mtd || {};
   return json({
     days,
     projects: projects?.results ?? [],
@@ -62,5 +68,6 @@ export const GET: APIRoute = async ({ cookies, url }) => {
     totalCost: t.cost ?? 0,
     totalInput: t.input ?? 0, totalOutput: t.output ?? 0,
     totalCacheRead: t.cacheRead ?? 0, totalCacheWrite: t.cacheWrite ?? 0,
+    monthToDate: { tokens: m.tokens ?? 0, cost: m.cost ?? 0 },
   });
 };

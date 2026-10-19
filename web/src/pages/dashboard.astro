@@ -125,10 +125,10 @@ const user = await currentUser(Astro.cookies);
         const denom = cr + inp + cw;
         const hit = denom > 0 ? Math.round((cr / denom) * 100) + "%" : "n/a";
         // Month-end forecast: this month so far / elapsed days * days in month.
-        const now = new Date(); const mp = dayStr(now).slice(0, 7);
-        const monthRows = d.daily.filter((r: any) => r.day.startsWith(mp));
+        const now = new Date();
         const dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-        const mCost = sum(monthRows, "cost"), mTok = sum(monthRows, "tokens");
+        // From the server, not d.daily: daily only covers 2x the range, which misses early-month days on 7d.
+        const mCost = Number(d.monthToDate?.cost) || 0, mTok = Number(d.monthToDate?.tokens) || 0;
         const fc = now.getDate() > 0 ? { c: (mCost / now.getDate()) * dim, t: (mTok / now.getDate()) * dim } : { c: 0, t: 0 };
         const top = (d.topProjects || [])[0];
         const cards: [string, string, string][] = [
@@ -215,7 +215,9 @@ const user = await currentUser(Astro.cookies);
 
       async function load() {
         syncUrl(); paintToggles();
-        const q = new URLSearchParams({ days: String(days) });
+        const now = new Date();
+        const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+        const q = new URLSearchParams({ days: String(days), month });
         if (psel.value) q.set("project", psel.value);
         if (asel.value) q.set("agent", asel.value);
         const d: any = await fetch("/api/usage/dashboard.json?" + q).then((r) => r.json()).catch(() => null);
