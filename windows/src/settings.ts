@@ -12,6 +12,7 @@ import { slice, type Rect } from "./pet";
 import * as care from "./care";
 import * as usage from "./usage";
 import * as projectpets from "./projectpets";
+import * as projectnames from "./projectnames";
 import * as sync from "./sync";
 import * as history from "./history";
 
@@ -740,6 +741,41 @@ function initBubble() {
   split.checked = projectpets.splitEnabled();
   split.onchange = () => { projectpets.setSplit(split.checked); renderSplitList(); emit("split-changed"); };
   renderSplitList();
+  initProjectNames();
+}
+
+// Friendly display names for projects. Saved on change/Enter; empty = folder name.
+function initProjectNames() {
+  const list = document.getElementById("projnames-list") as HTMLElement;
+  list.innerHTML = "";
+  const projects = usage.knownProjects();
+  if (!projects.length) {
+    const p = document.createElement("div");
+    p.className = "row";
+    p.innerHTML = `<span class="cap"></span>`;
+    (p.firstElementChild as HTMLElement).textContent = t("No projects yet. Use an agent in a project first.");
+    list.appendChild(p);
+    return;
+  }
+  for (const proj of projects) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const folder = document.createElement("span");
+    folder.className = "rt";
+    folder.textContent = proj.name;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.autocomplete = "off";
+    input.maxLength = 60;
+    input.placeholder = t("Folder name");
+    input.value = projectnames.customName(proj.id);
+    const save = () => { projectnames.setProjectName(proj.id, input.value); emit("bubble-changed", null); };
+    input.addEventListener("change", save);
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { save(); input.blur(); } });
+    row.appendChild(folder);
+    row.appendChild(input);
+    list.appendChild(row);
+  }
 }
 
 // -------------------------------------------------- bubble display + layout ----
@@ -1239,6 +1275,8 @@ function applyStatic() {
   set("t-reactive-sub", "The pet reacts to token usage, streaks, hunger, and busy sessions.");
   set("t-split", "Split pets by project");
   set("t-split-sub", "Give a project its own pet window; the rest stay on the main pet.");
+  set("t-projnames", "Project names");
+  set("t-projnames-sub", "Show a friendlier name instead of the folder name in the bubble and notifications. Leave empty to use the folder name.");
   set("t-display", "Display");
   set("t-rows", "Rows");
   set("o-bm-list", "All rows");

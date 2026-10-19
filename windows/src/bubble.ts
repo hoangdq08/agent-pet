@@ -5,10 +5,11 @@
 // (erase → retype → ellipsis-cycle/shimmer), state dots, and brand icons.
 
 import { invoke } from "@tauri-apps/api/core";
-import { Session, basename, agentLabel } from "./state";
+import { Session, agentLabel } from "./state";
 import { agentIconUrl, uiIcon } from "./icons";
 import { stateMessage, bubbleLine } from "./activity";
 import { t } from "./i18n";
+import { projectLabel } from "./projectnames";
 
 /// Stable hue from a custom agent's name so its lettered badge always gets the
 /// same color (issue #56, parity with the macOS CustomAgentIcon).
@@ -602,7 +603,7 @@ export class BubbleRenderer {
     }
 
     const project = el.querySelector<HTMLElement>(".rproject");
-    if (project) project.textContent = s.project ? basename(s.project) : s.session;
+    if (project) project.textContent = s.project ? projectLabel(s.project) : s.session;
 
     row.anim.set(messageFor(s), s.state !== "done");
 

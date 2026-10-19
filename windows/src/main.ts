@@ -2,7 +2,7 @@ import { listen, emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Pet } from "./pet";
-import { SessionStore, aggregateMood, basename, type AgentEventPayload } from "./state";
+import { SessionStore, aggregateMood, type AgentEventPayload } from "./state";
 import { BubbleRenderer } from "./bubble";
 import { loadCatalog, savedSlug, saveSlug } from "./catalog";
 import { t, setLang, type Lang } from "./i18n";
@@ -13,6 +13,7 @@ import * as usage from "./usage";
 import * as history from "./history";
 import * as reactive from "./reactive";
 import * as projectpets from "./projectpets";
+import { projectLabel } from "./projectnames";
 
 // Which project THIS pet window represents. `null` = the main window (the
 // default single pet). Split-pet spawns extra windows with `?project=<id>`.
@@ -307,7 +308,7 @@ function maybeNotify(e: AgentEventPayload) {
     if (e.project) usage.recordSession(e.project, e.agent);
     const now = Date.now();
     history.log({
-      id: e.session, agent: e.agent, project: e.project ? basename(e.project) : "",
+      id: e.session, agent: e.agent, project: e.project ? projectLabel(e.project) : "",
       title: e.title || "", startedAt: sessionStarts.get(key) ?? now, endedAt: now,
     });
   }
@@ -316,7 +317,7 @@ function maybeNotify(e: AgentEventPayload) {
   if (e.state !== "done" && e.state !== "waiting") return;
   chime(e.state === "done" ? "done" : "waiting");
   if (!notifyReady || localStorage.getItem("ap_notify") === "0") return;
-  const proj = (e.project ? basename(e.project) : "") || e.agent;
+  const proj = projectLabel(e.project || "") || e.agent;
   // Same copy as the macOS notifications.
   const title = e.state === "done" ? `${proj} ${t("finished")}` : `${proj} ${t("needs input")}`;
   const body = e.state === "done"
