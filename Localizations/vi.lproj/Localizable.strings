@@ -514,3 +514,5 @@
 "Bash approval gate" = "Cổng duyệt Bash";
 "Approve Bash from the bubble" = "Duyệt Bash từ bong bóng";
 "Claude Code Bash requests show Allow/Deny in the bubble instead of the terminal." = "Yêu cầu Bash của Claude Code hiện Cho phép/Từ chối trong bong bóng thay vì ở terminal.";
+"By agent" = "Theo agent";
+"Today · Month" = "Hôm nay · Tháng";

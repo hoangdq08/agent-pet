@@ -89,6 +89,13 @@ final class ProjectUsageStore: ObservableObject {
 
     // MARK: - Sync support
 
+    /// Tokens and sessions per agent for today and this calendar month.
+    func byAgent() -> [AgentUsageTotal] {
+        AgentUsage.totals(
+            rows.values.map { AgentUsage.Record(agent: $0.agent, day: $0.day, tokens: $0.tokens, sessions: $0.sessions) },
+            today: Self.today())
+    }
+
     /// Dirty rows to push. Grow-only + server MAX means re-pushing is harmless.
     func pendingRows() -> [Row] { dirty.compactMap { rows[$0] } }
     var hasPending: Bool { !dirty.isEmpty }
