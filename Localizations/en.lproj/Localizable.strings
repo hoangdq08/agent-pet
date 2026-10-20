@@ -516,3 +516,6 @@
 "Bash approval gate" = "Bash approval gate";
 "Approve Bash from the bubble" = "Approve Bash from the bubble";
 "Claude Code Bash requests show Allow/Deny in the bubble instead of the terminal." = "Claude Code Bash requests show Allow/Deny in the bubble instead of the terminal.";
+"Project names" = "Project names";
+"No projects seen yet." = "No projects seen yet.";
+"Projects used in the last 7 days. Show a friendlier name instead of the folder name in the bubble and notifications. Leave empty to use the folder name." = "Projects used in the last 7 days. Show a friendlier name instead of the folder name in the bubble and notifications. Leave empty to use the folder name.";

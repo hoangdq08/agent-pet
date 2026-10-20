@@ -516,3 +516,6 @@
 "Bash approval gate" = "Bash 審批開關";
 "Approve Bash from the bubble" = "在氣泡中審批 Bash";
 "Claude Code Bash requests show Allow/Deny in the bubble instead of the terminal." = "Claude Code 的 Bash 請求會在氣泡中顯示允許/拒絕，而不必回到終端。";
+"Project names" = "專案名稱";
+"No projects seen yet." = "尚未發現專案。";
+"Projects used in the last 7 days. Show a friendlier name instead of the folder name in the bubble and notifications. Leave empty to use the folder name." = "最近 7 天使用過的專案。在氣泡和通知中顯示更易讀的名稱，取代資料夾名。留空則使用資料夾名。";

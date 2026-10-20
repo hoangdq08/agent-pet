@@ -314,7 +314,8 @@ final class PetController: ObservableObject {
             return idleLine(petID: petID)
         case .working, .waiting:
             if BubbleSettings.shared.multiAgentBubbleEnabled && !sessions.isEmpty {
-                return sessions.map { "• \(TickerFormatter.line(for: $0))" }.joined(separator: "\n")
+                let names = ProjectNameStore.shared.names
+                return sessions.map { "• \(TickerFormatter.line(for: $0, projectNames: names))" }.joined(separator: "\n")
             }
             return chatLine(forMood: mood)
         case .done, .celebrate, .levelup:
@@ -335,7 +336,8 @@ final class PetController: ObservableObject {
             chatLine = ""
         } else {
             // Plain-text fallback used by the menu bar chat pill (lineLimit(1) shows first line).
-            chatLine = active.map { "• \(TickerFormatter.line(for: $0))" }.joined(separator: "\n")
+            let names = ProjectNameStore.shared.names
+            chatLine = active.map { "• \(TickerFormatter.line(for: $0, projectNames: names))" }.joined(separator: "\n")
         }
         StatusBarController.shared.refreshTitle()
         syncWindows()

@@ -305,6 +305,7 @@ private struct FooterButton: View {
 private struct AgentRow: View {
     let session: AgentSession
     var onClear: () -> Void = {}
+    @ObservedObject private var projectNames = ProjectNameStore.shared
     @State private var hovering = false
 
     var body: some View {
@@ -336,7 +337,7 @@ private struct AgentRow: View {
     }
 
     private var project: String {
-        session.project.map { ($0 as NSString).lastPathComponent } ?? session.id
+        session.project.map { projectNames.label(for: $0) } ?? session.id
     }
 
     /// The agent's context (waiting reason / running tool) when known, else its state.
