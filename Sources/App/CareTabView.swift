@@ -110,6 +110,8 @@ struct CareTabView: View {
                 LabeledContent("Total sessions", value: "\(care.current.totalMeals)")
             }
 
+            AgentUsageSection()
+
             Section {
                 let unlocked = care.achievements
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 5), spacing: 14) {

@@ -45,6 +45,7 @@ struct PetStatsView: View {
             statGrid(state)
             trendBlock(state)
             costBlock
+            AgentUsageRows(limit: 6)
             usageBlock
             if let last = state.lastFedAt {
                 HStack {
