@@ -302,7 +302,7 @@ final class AppDaemon: ObservableObject {
 
     private func notifyIfNeeded(before: AgentState?, session: AgentSession) {
         guard session.state != before else { return }
-        let project = session.project.map { ($0 as NSString).lastPathComponent } ?? session.id
+        let project = session.project.map { ProjectNameStore.shared.label(for: $0) } ?? session.id
         switch session.state {
         case .waiting:
             NotificationManager.shared.notify(

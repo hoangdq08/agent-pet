@@ -89,6 +89,21 @@ final class ProjectUsageStore: ObservableObject {
 
     // MARK: - Sync support
 
+    /// Projects seen so far as (id, folder name), most recently used first. Only
+    /// those used in the last `withinDays` days, plus any id in `alwaysInclude`
+    /// (projects that already have a name), so the Settings list stays short.
+    func knownProjects(withinDays: Int = 7, alwaysInclude: Set<String> = []) -> [(id: String, folder: String)] {
+        let cutoff = Self.dayString(daysAgo: withinDays)
+        var latest: [String: (day: String, folder: String)] = [:]
+        for r in rows.values where latest[r.projectId].map({ r.day > $0.day }) ?? true {
+            latest[r.projectId] = (r.day, r.projectName)
+        }
+        return latest
+            .filter { $0.value.day >= cutoff || alwaysInclude.contains($0.key) }
+            .sorted { $0.value.day != $1.value.day ? $0.value.day > $1.value.day : $0.value.folder < $1.value.folder }
+            .map { (id: $0.key, folder: $0.value.folder) }
+    }
+
     /// Dirty rows to push. Grow-only + server MAX means re-pushing is harmless.
     func pendingRows() -> [Row] { dirty.compactMap { rows[$0] } }
     var hasPending: Bool { !dirty.isEmpty }
