@@ -79,6 +79,9 @@ final class AppDaemon: ObservableObject {
         let before = store.session(id: event.sessionId)?.state
         guard let updated = store.apply(event, now: Date()) else {
             feedSubagentTokens(for: event)
+            if event.agentKind == .jcode, event.eventName == "session_end" {
+                jcodeUsage.forget(sessionId: event.sessionId)
+            }
             refresh()
             return
         }
@@ -138,8 +141,38 @@ final class AppDaemon: ObservableObject {
             }
         case .codex:
             feedCodexTokens(for: event)
+        case .jcode:
+            feedJcodeTokens(for: event)
         default:
             return
+        }
+    }
+
+    /// jcode keeps token usage only in its session files. Read the total at the
+    /// start of a turn (baseline) and at its end, and feed the difference.
+    private var jcodeUsage = JcodeUsageTracker()
+
+    private func feedJcodeTokens(for event: AgentEvent) {
+        let sid = event.sessionId
+        switch event.eventName {
+        case "session_start", "turn_start", "turn_end", AgentState.waiting.rawValue:
+            break
+        default:
+            return  // post_tool: the turn's tokens are fed once, at its end
+        }
+        guard let path = JcodeUsage.sessionPath(sessionId: sid, home: NSHomeDirectory()) else { return }
+        let isEnd = event.eventName == "turn_end" || event.eventName == AgentState.waiting.rawValue
+        let project = event.project
+        Task.detached(priority: .utility) {
+            let total = JcodeUsage.totalTokens(snapshotPath: path)
+            await MainActor.run {
+                let daemon = AppDaemon.shared
+                guard isEnd else { return daemon.jcodeUsage.baseline(sessionId: sid, total: total) }
+                let tokens = daemon.jcodeUsage.delta(sessionId: sid, total: total)
+                guard tokens > 0 else { return }
+                PetCareController.shared.feedTokens(tokens, petID: daemon.careTarget(forProject: project))
+                ProjectUsageStore.shared.recordTokens(tokens, project: project, agent: "jcode")
+            }
         }
     }
 
