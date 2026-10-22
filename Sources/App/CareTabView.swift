@@ -7,6 +7,7 @@ struct CareTabView: View {
     @ObservedObject private var care = PetCareController.shared
     @ObservedObject private var usage = OpenUsageClient.shared
     @ObservedObject private var probe = NativeUsageProbe.shared
+    @ObservedObject private var visibility = UsageVisibility.shared
     @ObservedObject private var sync = CareSyncController.shared
     @ObservedObject private var pet = PetController.shared
     @ObservedObject private var imagePets = ImagePetStore.shared
@@ -209,7 +210,7 @@ struct CareTabView: View {
                 Text("Connecting is optional. Your pet, its level and all stats live on this Mac whether or not you sign in, nothing leaves your machine until you connect.")
             }
 
-            Section("Food sources") {
+            Section {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Claude Code transcripts")
@@ -233,25 +234,22 @@ struct CareTabView: View {
                     }
                 }
                 ForEach(NativeUsageProbe.combined()) { p in
-                    let used = 1 - (p.fractionLeft ?? 0)
-                    let color: Color = used > 0.9 ? .red : (used > 0.75 ? .orange : stageColor)
                     VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Text(verbatim: p.displayName).font(.callout.weight(.medium))
-                            if let w = p.windowLabel {
-                                Text(verbatim: w).font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Text(String(format: NSLocalizedString("%d%% used", comment: ""), Int((used * 100).rounded())))
-                                .font(.caption.weight(.semibold)).foregroundStyle(color)
-                            if let reset = PetStatsView.resetText(p.resetsAt) {
-                                Text(verbatim: "· \(reset)").font(.caption).foregroundStyle(.secondary)
-                            }
+                        Toggle(isOn: visibility.binding(for: p.id)) {
+                            Text(String(format: NSLocalizedString("Show %@ in Limits", comment: "per-provider toggle"), p.displayName))
+                                .font(.caption)
                         }
-                        ProgressView(value: used).tint(color)
+                        .toggleStyle(.switch).controlSize(.mini)
+                        if visibility.isVisible(p.id) {
+                            LimitWindowsView(provider: p, tint: stageColor, compact: false)
+                        }
                     }
                     .padding(.vertical, 2)
                 }
+            } header: {
+                Text("Food sources")
+            } footer: {
+                Text("Hidden providers stay out of the stats card and don't make your pet anxious.")
             }
         }
         .formStyle(.grouped)
