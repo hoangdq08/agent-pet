@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod geometry;
 pub mod hooks;
 pub mod server;
 pub mod statemap;
@@ -128,6 +129,27 @@ fn is_installed(kind: String) -> bool {
 #[tauri::command]
 fn toggle_install(kind: String) -> Result<bool, String> {
     hooks::toggle(&kind)
+}
+
+/// True while the left mouse button is held (a drag in progress), so the
+/// off-screen fix waits for the drop instead of fighting the drag.
+fn mouse_down() -> bool {
+    #[cfg(windows)]
+    {
+        #[link(name = "user32")]
+        extern "system" {
+            fn GetAsyncKeyState(vkey: i32) -> i16;
+        }
+        const VK_LBUTTON: i32 = 0x01;
+        // SAFETY: plain Win32 query with no pointers; high bit = currently down.
+        unsafe { (GetAsyncKeyState(VK_LBUTTON) as u16 & 0x8000) != 0 }
+    }
+    #[cfg(not(windows))]
+    {
+        // simplify: no global button query here; the 1 s save cadence
+        // (tick % 33) rarely lands mid-drag. Upgrade: track the drag in JS.
+        false
+    }
 }
 
 /// Window creation MUST NOT run inside a sync command / menu callback on
@@ -513,7 +535,31 @@ pub fn run() {
 
                     tick = tick.wrapping_add(1);
                     if tick % 33 == 0 {
-                        if let Ok(p) = win.outer_position() {
+                        if let Ok(mut p) = win.outer_position() {
+                            // A pet dropped past an edge (or outside every
+                            // monitor) comes back onto the nearest work area
+                            // before it is saved there (macOS fix, PR #67).
+                            // Only once the mouse is released, so an ongoing
+                            // drag is never fought.
+                            if !mouse_down() {
+                                if let (Ok(size), Ok(mons)) = (win.outer_size(), win.available_monitors()) {
+                                    let areas: Vec<geometry::Rect> = mons.iter().map(|m| {
+                                        let wa = m.work_area();
+                                        (wa.position.x, wa.position.y, wa.size.width as i32, wa.size.height as i32)
+                                    }).collect();
+                                    let visible = handle
+                                        .try_state::<Mutex<HitRect>>()
+                                        .and_then(|s| s.lock().ok().map(|r| (r.x, r.y, r.w, r.h)))
+                                        .unwrap_or((0.0, 0.0, 0.0, 0.0));
+                                    let fixed = geometry::keep_visible_on_screen((p.x, p.y), (size.width as i32, size.height as i32), visible, &areas);
+                                    if fixed != (p.x, p.y) {
+                                        dlog(&format!("pet off screen at ({},{}) -> ({},{})", p.x, p.y, fixed.0, fixed.1));
+                                        let _ = win.set_position(PhysicalPosition::new(fixed.0, fixed.1));
+                                        p.x = fixed.0;
+                                        p.y = fixed.1;
+                                    }
+                                }
+                            }
                             if last_saved != Some((p.x, p.y)) {
                                 write_pos(p.x, p.y);
                                 last_saved = Some((p.x, p.y));
