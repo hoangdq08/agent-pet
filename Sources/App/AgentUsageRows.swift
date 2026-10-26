@@ -35,7 +35,7 @@ struct AgentUsageRows: View {
                             .font(.system(size: 10, weight: .semibold)).foregroundStyle(.white.opacity(0.55))
                     }
                 }
-                if limit != nil, hidden > 0 || expanded {
+                if let limit, rows.count > limit {
                     ShowMoreButton(expanded: $expanded, hidden: hidden)
                 }
             }
