@@ -64,6 +64,14 @@ final class UsageWindowsTests: XCTestCase {
         XCTAssertEqual(LimitFormat.title(bare), "7d")
     }
 
+    func testShortWindowsAndEmptyLabels() {
+        let tenMin = OpenUsageClient.Window(label: "Burst", fractionLeft: 1, period: 600)
+        XCTAssertEqual(LimitFormat.shortLabel(tenMin), "10m")
+        XCTAssertEqual(LimitFormat.title(tenMin), "Burst · 10m")
+        let blank = OpenUsageClient.Window(label: "", fractionLeft: 1, period: nil)
+        XCTAssertFalse(LimitFormat.title(blank).isEmpty)
+    }
+
     func testResetClockTodayThisWeekAndLater() throws {
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = try XCTUnwrap(TimeZone(identifier: "Asia/Ho_Chi_Minh"))
