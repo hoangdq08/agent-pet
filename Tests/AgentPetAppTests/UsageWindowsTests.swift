@@ -85,6 +85,31 @@ final class UsageWindowsTests: XCTestCase {
         XCTAssertEqual(LimitFormat.clock(later, now: now, calendar: cal, locale: locale), "1 Nov")
     }
 
+    /// The formatter is built once per template, locale and time zone, not once
+    /// per row per render.
+    func testClockReusesFormatterPerTemplateLocaleAndZone() throws {
+        var hcm = Calendar(identifier: .gregorian)
+        hcm.timeZone = try XCTUnwrap(TimeZone(identifier: "Asia/Ho_Chi_Minh"))
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let gb = Locale(identifier: "en_GB")
+        let us = Locale(identifier: "en_US")
+
+        let a = LimitFormat.formatter(template: "jmm", calendar: hcm, locale: gb)
+        XCTAssertTrue(a === LimitFormat.formatter(template: "jmm", calendar: hcm, locale: gb))
+        XCTAssertFalse(a === LimitFormat.formatter(template: "MMMd", calendar: hcm, locale: gb))
+        XCTAssertFalse(a === LimitFormat.formatter(template: "jmm", calendar: hcm, locale: us))
+        XCTAssertFalse(a === LimitFormat.formatter(template: "jmm", calendar: utc, locale: gb))
+
+        // Reuse must not leak one zone's output into another.
+        // 12:00 and 15:00 +07:00 are 05:00 and 08:00 UTC: the same day in both zones.
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-10-03T12:00:00+07:00"))
+        let at = now.addingTimeInterval(3 * 3600)
+        XCTAssertEqual(LimitFormat.clock(at, now: now, calendar: hcm, locale: gb), "15:00")
+        XCTAssertEqual(LimitFormat.clock(at, now: now, calendar: utc, locale: gb), "08:00")
+        XCTAssertEqual(LimitFormat.clock(at, now: now, calendar: hcm, locale: gb), "15:00")
+    }
+
     func testResetTextNilWhenPastOrUnknown() {
         let now = Date()
         XCTAssertNil(LimitFormat.reset(nil, now: now))
