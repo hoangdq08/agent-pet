@@ -53,7 +53,7 @@ enum LimitFormat {
     nonisolated(unsafe) private static var formatters: [String: DateFormatter] = [:]
     private static let formattersLock = NSLock()
 
-    private static func formatter(template: String, calendar: Calendar, locale: Locale) -> DateFormatter {
+    static func formatter(template: String, calendar: Calendar, locale: Locale) -> DateFormatter {
         let key = [template, locale.identifier, "\(calendar.identifier)", calendar.timeZone.identifier].joined(separator: "|")
         formattersLock.lock()
         defer { formattersLock.unlock() }
