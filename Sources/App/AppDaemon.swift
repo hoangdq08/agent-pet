@@ -151,6 +151,12 @@ final class AppDaemon: ObservableObject {
     /// jcode keeps token usage only in its session files. Read the total at the
     /// start of a turn (baseline) and at its end, and feed the difference.
     private var jcodeUsage = JcodeUsageTracker()
+    /// The previous read, so the next one starts after it finishes. Reads run off
+    /// the main actor (the files can be tens of MB), but their results must be
+    /// applied in event order: a smaller, older total landing after a newer one
+    /// would lower the baseline (it looks like compaction) and the next turn would
+    /// feed the same tokens again.
+    private var jcodeReadChain: Task<Void, Never>?
 
     private func feedJcodeTokens(for event: AgentEvent) {
         let sid = event.sessionId
@@ -162,17 +168,22 @@ final class AppDaemon: ObservableObject {
         }
         guard let path = JcodeUsage.sessionPath(sessionId: sid, home: NSHomeDirectory()) else { return }
         let isEnd = event.eventName == "turn_end" || event.eventName == AgentState.waiting.rawValue
+        // A start event only sets the baseline, which is already set for a tracked
+        // session, so skip scanning the whole snapshot and journal again.
+        if !isEnd, jcodeUsage.isTracking(sid) { return }
         let project = event.project
-        Task.detached(priority: .utility) {
-            let total = JcodeUsage.totalTokens(snapshotPath: path)
-            await MainActor.run {
-                let daemon = AppDaemon.shared
-                guard isEnd else { return daemon.jcodeUsage.baseline(sessionId: sid, total: total) }
-                let tokens = daemon.jcodeUsage.delta(sessionId: sid, total: total)
-                guard tokens > 0 else { return }
-                PetCareController.shared.feedTokens(tokens, petID: daemon.careTarget(forProject: project))
-                ProjectUsageStore.shared.recordTokens(tokens, project: project, agent: "jcode")
-            }
+        let previous = jcodeReadChain
+        jcodeReadChain = Task { @MainActor in
+            await previous?.value
+            let total = await Task.detached(priority: .utility) {
+                JcodeUsage.totalTokens(snapshotPath: path)
+            }.value
+            let daemon = AppDaemon.shared
+            guard isEnd else { return daemon.jcodeUsage.baseline(sessionId: sid, total: total) }
+            let tokens = daemon.jcodeUsage.delta(sessionId: sid, total: total)
+            guard tokens > 0 else { return }
+            PetCareController.shared.feedTokens(tokens, petID: daemon.careTarget(forProject: project))
+            ProjectUsageStore.shared.recordTokens(tokens, project: project, agent: "jcode")
         }
     }
 
@@ -313,7 +324,9 @@ final class AppDaemon: ObservableObject {
                 title: "\(project) finished", body: "Agent completed its turn")
             SoundSettings.shared.play(.done)
             PetCareController.shared.recordMeal(petID: careTarget(forProject: session.project))
-            ProjectUsageStore.shared.recordSession(project: session.project, agent: session.agentKind.rawValue)
+            ProjectUsageStore.shared.recordSession(
+                project: session.project,
+                agent: AgentUsage.key(kind: session.agentKind, agentName: session.agentName))
         default:
             break
         }
