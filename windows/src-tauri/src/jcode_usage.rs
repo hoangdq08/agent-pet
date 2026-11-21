@@ -1,4 +1,4 @@
-//! jcode token usage (port of the macOS JcodeUsage, dev commit dc2c18e).
+//! jcode token usage (port of the macOS JcodeUsage on hoangdq08's dev branch, not upstream yet).
 //!
 //! jcode's hooks carry no token counts, so the session files are the only
 //! source: a snapshot `~/.jcode/sessions/<id>.json` plus a journal
@@ -242,7 +242,7 @@ pub fn spawn_worker(
 mod tests {
     use super::*;
 
-    // Shapes copied from the macOS JcodeUsageTests (real sessions, 2026-10-04).
+    // Shapes copied from the macOS JcodeUsageTests on that dev branch (real sessions, 2026-10-04).
     fn session(usages: &[&str]) -> Vec<u8> {
         let msgs: Vec<String> = usages.iter().map(|u| format!(
             r#"{{"role":"user","content":[{{"type":"text","text":"say \"token_usage\": hi"}}]}},{{"role":"assistant","content":[],"token_usage":{u}}}"#

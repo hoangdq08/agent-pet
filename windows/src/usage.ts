@@ -75,11 +75,16 @@ function loadDirty(): Set<string> {
 }
 function saveDirty(d: Set<string>) { localStorage.setItem(DIRTY_KEY, JSON.stringify([...d])); }
 
-/// Shown for usage from agents whose hook carries no workspace (Antigravity IDE).
+/// Shown for usage from agents whose hook carries no workspace. Only Antigravity
+/// (IDE) gets this fallback: every other agent keeps the macOS behaviour
+/// (`ProjectUsageStore.record` drops an empty project), so "By agent" totals and
+/// what is pushed to /api/usage/sync stay the same across platforms.
 export const NO_PROJECT = "(no project)";
+const NO_PROJECT_AGENTS = new Set(["antigravity"]);
 
 function record(project: string, agent: string, tokens: number, sessions: number, cost = 0, bd: Breakdown = {}) {
   if (!agent || (tokens <= 0 && sessions <= 0)) return;
+  if (!project && !NO_PROJECT_AGENTS.has(agent)) return;
   const { id, name } = projectIdentity(project || NO_PROJECT);
   const day = today();
   const key = `${id}|${agent}|${day}`;
@@ -138,7 +143,7 @@ export function byAgent(): AgentTotal[] {
     if (r.day === t) cur.today += r.tokens;
     m.set(r.agent, cur);
   }
-  return [...m.values()].filter((a) => a.month > 0 || a.sessions > 0).sort((a, b) => b.month - a.month);
+  return [...m.values()].filter((a) => a.month > 0 || a.sessions > 0).sort((a, b) => b.month - a.month || a.agent.localeCompare(b.agent)); // tie-break by name, like macOS
 }
 
 /// Projects seen in usage history (for the split-pet assignment UI), most tokens

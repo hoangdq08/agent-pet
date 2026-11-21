@@ -9,7 +9,7 @@
 //!   it (`<gemini>/antigravity-ide/conversations/<id>.db`, table `steps`, column
 //!   `metadata`, protobuf field 9) does: 9.2 = input tokens, 9.3 = output tokens
 //!   (absent when 0). Verified equal to the CLI transcript on 134 model steps.
-//!   `usage_for_transcript` picks the DB when the transcript has no token fields.
+//!   `new_usage_tokens` picks the DB for IDE transcripts (path under `antigravity-ide`).
 //!
 //! Counted as input + output. agy's `input_tokens` excludes cached tokens
 //! (`cache_read_tokens` / DB field 9.5 are reported separately), so nothing is
@@ -20,8 +20,21 @@
 //! step cannot be told apart, so only steps added after the first sighting
 //! count), so resuming a long conversation never feeds its whole history.
 //!
-//! simplify: a CLI transcript is read whole once, then only its appended tail.
-//! The IDE DB is re-read per event (small files, read-only, shared WAL).
+//! Cost control (the DB grows with the conversation, and hook events come in
+//! bursts):
+//! * IDE: only steps after the last user message are read on first sight, then
+//!   only a small window behind the newest step (`DB_WINDOW`, enough for a step
+//!   whose usage is written a little after the step itself), never the whole
+//!   table again.
+//! * Events for one path are coalesced (`coalesce`): at most one scan runs per
+//!   path and a burst of events collapses into one follow-up scan.
+//! * CLI: the first read of a transcript is capped (`FIRST_READ_CAP`), because
+//!   the path comes from the localhost hook payload.
+//! * Per-path state is bounded (`MAX_TRACKED`, least recently used goes first),
+//!   so a long-running app does not grow without limit.
+//!
+//! simplify: a CLI transcript is read once (capped), then only its appended
+//! tail. A usage that appears more than `DB_WINDOW` steps late is missed.
 
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -29,8 +42,71 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+/// First read of a transcript looks only at its last few MB (the current
+/// request is at the end; older history is never fed anyway).
+const FIRST_READ_CAP: u64 = 4 * 1024 * 1024;
+/// How many steps behind the newest one are re-read to catch late usage.
+const DB_WINDOW: i64 = 64;
+/// Paths tracked at once (offsets / DB state). Oldest-used is evicted first.
+const MAX_TRACKED: usize = 64;
+/// Wait before a coalesced scan so a burst of hook events becomes one read.
+const DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// A small LRU-ish map: `touch` stamps entries, `trim` drops the oldest ones.
+struct Tracked<V> {
+    map: HashMap<String, (V, u64)>,
+    tick: u64,
+}
+impl<V> Tracked<V> {
+    fn new() -> Self { Tracked { map: HashMap::new(), tick: 0 } }
+    fn get(&mut self, key: &str) -> Option<&mut V> {
+        self.tick += 1;
+        let t = self.tick;
+        self.map.get_mut(key).map(|e| { e.1 = t; &mut e.0 })
+    }
+    fn insert(&mut self, key: String, v: V) {
+        self.tick += 1;
+        self.map.insert(key, (v, self.tick));
+        while self.map.len() > MAX_TRACKED {
+            let oldest = self.map.iter().min_by_key(|(_, e)| e.1).map(|(k, _)| k.clone());
+            match oldest { Some(k) => { self.map.remove(&k); } None => break }
+        }
+    }
+}
+
 // Byte offset already consumed per transcript path.
-static OFFSETS: Mutex<Option<HashMap<String, u64>>> = Mutex::new(None);
+static OFFSETS: Mutex<Option<Tracked<u64>>> = Mutex::new(None);
+
+// Paths with a scan running; the flag says "another event arrived meanwhile".
+static RUNNING: Mutex<Option<HashMap<String, bool>>> = Mutex::new(None);
+
+/// Runs `scan` for `path` on the current thread unless one is already running
+/// for it. Events that arrive while it runs only set a flag, and the running
+/// call loops once more (after `DEBOUNCE`), so a burst costs two scans at most
+/// and scans of the same path never overlap. `scan` returns tokens to feed.
+pub fn coalesce(path: &str, scan: impl Fn() -> Option<i64>, feed: impl Fn(i64)) {
+    {
+        let Ok(mut g) = RUNNING.lock() else { return };
+        let m = g.get_or_insert_with(HashMap::new);
+        if let Some(rerun) = m.get_mut(path) {
+            *rerun = true;
+            return;
+        }
+        m.insert(path.to_string(), false);
+    }
+    loop {
+        std::thread::sleep(DEBOUNCE);
+        if let Some(t) = scan() {
+            if t > 0 { feed(t); }
+        }
+        let Ok(mut g) = RUNNING.lock() else { return };
+        let m = g.get_or_insert_with(HashMap::new);
+        match m.get_mut(path) {
+            Some(rerun) if *rerun => *rerun = false,
+            _ => { m.remove(path); return; }
+        }
+    }
+}
 
 fn contains(hay: &[u8], needle: &[u8]) -> bool {
     hay.windows(needle.len()).any(|w| w == needle)
@@ -72,8 +148,18 @@ pub fn current_request_start(buf: &[u8]) -> usize {
     best
 }
 
-// Conversation DB steps already counted, per DB path (IDE).
-static SEEN_STEPS: Mutex<Option<HashMap<String, HashSet<i64>>>> = Mutex::new(None);
+/// What is known about one conversation DB.
+struct DbState {
+    /// First idx ever read (history before it was never fed and is never read).
+    floor: i64,
+    /// Newest idx seen so far.
+    max_idx: i64,
+    /// Steps in the window whose usage was already counted.
+    seen: HashSet<i64>,
+}
+
+// Conversation DB state per DB path (IDE).
+static DBS: Mutex<Option<Tracked<DbState>>> = Mutex::new(None);
 
 const STEP_USER_INPUT: i64 = 14; // steps.step_type of a user message
 
@@ -156,42 +242,68 @@ pub fn ide_db_for(transcript: &str) -> Option<PathBuf> {
     Some(root.join("conversations").join(format!("{id}.db")))
 }
 
-/// (idx, step_type, metadata) of every step, read-only.
-fn read_steps(db: &Path) -> Option<Vec<(i64, i64, Option<Vec<u8>>)>> {
+type Step = (i64, i64, Option<Vec<u8>>);
+
+/// Idx of the last user message, or -1 when there is none (cheap aggregate).
+fn last_user_idx(db: &Path) -> Option<i64> {
+    let conn = open_ro(db)?;
+    conn.query_row("SELECT COALESCE(MAX(idx), -1) FROM steps WHERE step_type = ?1", [STEP_USER_INPUT], |r| r.get(0)).ok()
+}
+
+fn open_ro(db: &Path) -> Option<rusqlite::Connection> {
     use rusqlite::{Connection, OpenFlags};
     let conn = Connection::open_with_flags(db, OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
     let _ = conn.busy_timeout(std::time::Duration::from_millis(500));
-    let mut stmt = conn.prepare("SELECT idx, step_type, metadata FROM steps ORDER BY idx").ok()?;
+    Some(conn)
+}
+
+/// (idx, step_type, metadata) of the steps with `idx >= low`, read-only.
+fn read_steps_from(db: &Path, low: i64) -> Option<Vec<Step>> {
+    let conn = open_ro(db)?;
+    let mut stmt = conn.prepare("SELECT idx, step_type, metadata FROM steps WHERE idx >= ?1 ORDER BY idx").ok()?;
     let rows = stmt
-        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, Option<Vec<u8>>>(2)?)))
+        .query_map([low], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, Option<Vec<u8>>>(2)?)))
         .ok()?;
     Some(rows.filter_map(|r| r.ok()).collect())
 }
 
 /// New tokens in the IDE conversation DB since the previous call. A step is
 /// counted once, whenever its usage appears (a step can exist before its usage
-/// is written). On first sighting everything up to the last user message is
-/// history and only marked as seen, so resuming a conversation feeds nothing old.
+/// is written). On first sight everything before the last user message is
+/// history: it is neither read nor fed, so resuming a conversation feeds nothing
+/// old. Afterwards only the last `DB_WINDOW` steps (never below that first
+/// point) are read, not the whole table. Callers serialise per path (`coalesce`).
 pub fn new_db_tokens(db: &Path) -> Option<i64> {
-    let steps = read_steps(db)?;
     let key = db.to_string_lossy().into_owned();
-    let mut guard = SEEN_STEPS.lock().ok()?;
-    let all = guard.get_or_insert_with(HashMap::new);
-    let first = !all.contains_key(&key);
-    let seen = all.entry(key).or_default();
-    let last_user = steps.iter().filter(|s| s.1 == STEP_USER_INPUT).map(|s| s.0).max().unwrap_or(-1);
+    let known = {
+        let mut g = DBS.lock().ok()?;
+        g.get_or_insert_with(Tracked::new).get(&key).map(|st| (st.floor, st.max_idx))
+    };
+    let (floor, low, first) = match known {
+        Some((floor, max_idx)) => (floor, floor.max(max_idx - DB_WINDOW + 1), false),
+        None => {
+            let f = last_user_idx(db)?.max(0);
+            (f, f, true)
+        }
+    };
+    let steps = read_steps_from(db, low)?;
+    let mut g = DBS.lock().ok()?;
+    let all = g.get_or_insert_with(Tracked::new);
+    if first {
+        all.insert(key.clone(), DbState { floor, max_idx: -1, seen: HashSet::new() });
+    }
+    let st = all.get(&key)?;
     let mut total = 0;
     for (idx, _, md) in &steps {
+        st.max_idx = st.max_idx.max(*idx);
         let Some((input, output)) = md.as_deref().and_then(parse_usage) else { continue };
-        if seen.contains(idx) {
-            continue;
+        if st.seen.insert(*idx) {
+            total += input.max(0) + output.max(0);
         }
-        seen.insert(*idx);
-        if first && *idx < last_user {
-            continue; // history from before the current request
-        }
-        total += input.max(0) + output.max(0);
     }
+    // Forget counted steps that left the window so the set stays small.
+    let keep_from = st.floor.max(st.max_idx - DB_WINDOW + 1);
+    st.seen.retain(|i| *i >= keep_from);
     Some(total)
 }
 
@@ -209,14 +321,21 @@ pub fn new_usage_tokens(path: &str) -> Option<i64> {
 /// two events for one conversation cannot both consume the same bytes.
 pub fn new_transcript_tokens(path: &str) -> Option<i64> {
     let mut guard = OFFSETS.lock().ok()?;
-    let offsets = guard.get_or_insert_with(HashMap::new);
+    let offsets = guard.get_or_insert_with(Tracked::new);
 
     let mut f = std::fs::File::open(path).ok()?;
     let size = f.seek(SeekFrom::End(0)).ok()?;
-    let known = offsets.get(path).copied();
+    let known = offsets.get(path).map(|o| *o);
     let mut start = known.unwrap_or(0);
     if start > size {
         start = 0; // file replaced: start over
+    }
+    // A big first read (or a huge jump): only the tail (see FIRST_READ_CAP). The cut can
+    // land mid-line, so skip to the first newline after it.
+    let mut cut = false;
+    if size - start > FIRST_READ_CAP {
+        start = size - FIRST_READ_CAP;
+        cut = true;
     }
     if known.is_some() && size <= start {
         return Some(0);
@@ -224,6 +343,11 @@ pub fn new_transcript_tokens(path: &str) -> Option<i64> {
     f.seek(SeekFrom::Start(start)).ok()?;
     let mut buf = Vec::new();
     f.read_to_end(&mut buf).ok()?;
+    if cut {
+        let nl = buf.iter().position(|&b| b == b'\n').map(|i| i + 1).unwrap_or(buf.len());
+        start += nl as u64;
+        buf.drain(..nl);
+    }
 
     let skip = if known.is_none() { current_request_start(&buf) } else { 0 };
     let body = &buf[skip..];
@@ -437,6 +561,71 @@ mod tests {
         std::fs::write(&p, b"this is not sqlite").unwrap();
         assert_eq!(new_db_tokens(&p), None);
         let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn db_reads_only_a_window_after_the_first_scan() {
+        let p = tmp("db-window");
+        // 300 model steps: after the first scan only DB_WINDOW of them may be re-read.
+        let mut steps: Vec<(i64, i64, Option<Vec<u8>>)> = vec![(0, 14, None)];
+        for i in 1..=300 { steps.push((i, 15, Some(usage_md(10, None)))); }
+        make_db(&p, &steps);
+        assert_eq!(new_db_tokens(&p), Some(3000));
+        // Tamper with an old step far outside the window: it must not be re-read.
+        let c = rusqlite::Connection::open(&p).unwrap();
+        c.execute("UPDATE steps SET metadata=?1 WHERE idx=5", rusqlite::params![usage_md(999_999, None)]).unwrap();
+        drop(c);
+        add_step(&p, 301, 15, Some(usage_md(7, None)));
+        assert_eq!(new_db_tokens(&p), Some(7));
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn tracked_map_is_bounded_and_evicts_the_oldest() {
+        let mut t: Tracked<u8> = Tracked::new();
+        for i in 0..(MAX_TRACKED + 10) {
+            t.insert(format!("k{i}"), 0);
+            if i == 0 { continue; }
+            t.get("k0"); // keep k0 fresh
+        }
+        assert_eq!(t.map.len(), MAX_TRACKED);
+        assert!(t.get("k0").is_some(), "recently used entry survives");
+        assert!(t.get("k1").is_none(), "oldest unused entry was evicted");
+    }
+
+    #[test]
+    fn first_read_of_a_huge_transcript_is_capped() {
+        let p = tmp("huge");
+        let filler = format!("{{\"type\":\"GENERIC\",\"content\":\"{}\"}}\n", "x".repeat(1000));
+        let mut s = String::new();
+        // About 2 x FIRST_READ_CAP of filler, then one real model step at the end.
+        for _ in 0..(2 * FIRST_READ_CAP as usize / filler.len()) { s.push_str(&filler); }
+        s.push_str(&format!("{PLAN1}\n"));
+        std::fs::write(&p, &s).unwrap();
+        assert_eq!(new_transcript_tokens(p.to_str().unwrap()), Some(11641 + 58));
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn a_burst_of_events_becomes_at_most_two_scans() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let scans = Arc::new(AtomicUsize::new(0));
+        let fed = Arc::new(AtomicUsize::new(0));
+        let path = "burst-test-path";
+        let mut hs = vec![];
+        for _ in 0..8 {
+            let (s, f) = (scans.clone(), fed.clone());
+            hs.push(std::thread::spawn(move || {
+                coalesce(path, || { s.fetch_add(1, Ordering::SeqCst); std::thread::sleep(DEBOUNCE); Some(5) },
+                         |t| { f.fetch_add(t as usize, Ordering::SeqCst); });
+            }));
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        for h in hs { h.join().unwrap(); }
+        let n = scans.load(Ordering::SeqCst);
+        assert!(n >= 1 && n <= 2, "scans={n}");
+        assert_eq!(fed.load(Ordering::SeqCst), 5 * n);
     }
 
     #[test]

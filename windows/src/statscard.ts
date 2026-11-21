@@ -1,4 +1,4 @@
-// The pet's right-click stats card , a port of the macOS PetStatsView:
+// The pet's right-click stats card, a port of the macOS PetStatsView:
 // header (sprite, level, stage, hunger), XP, achievements, the four stat
 // cells, 7-day burn, cost, subscription limits, last fed, and a footer.
 // Pure HTML builders live here so they can be tested without a webview.

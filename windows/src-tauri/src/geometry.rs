@@ -1,4 +1,4 @@
-//! Keep the pet window on a screen (port of the macOS dev fix c9a36dd:
+//! Keep the pet window on a screen (port of the macOS fix in PR #67:
 //! "keep a dragged pet on screen when dropped past an edge"). Pure math on
 //! physical-pixel rects so it can be unit-tested; lib.rs feeds it the
 //! monitors' work areas.

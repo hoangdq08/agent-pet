@@ -116,7 +116,8 @@ pub fn candidate_tokens(paths: &[PathBuf], now_secs: f64) -> Vec<String> {
     out
 }
 
-/// Claude Code (native home, then WSL home) and jcode (`hooks::jcode_home`).
+/// Claude Code (native home) and jcode (`hooks::jcode_home`: the WSL home only
+/// once jcode was found there, see the note in hooks.rs; never spawns wsl.exe).
 pub fn default_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
     if let Some(home) = dirs::home_dir() {
@@ -139,8 +140,12 @@ fn now_secs() -> f64 {
 /// Tries every unexpired token in order (each source is refreshed only by its
 /// own CLI, so one can be stale while another is live). None when no token
 /// works or the network is down; the UI then just shows nothing.
-pub async fn probe_claude(paths: &[PathBuf]) -> Option<LimitProvider> {
-    let tokens = candidate_tokens(paths, now_secs());
+pub async fn probe_claude(paths: Vec<PathBuf>) -> Option<LimitProvider> {
+    // Blocking file reads (a `\\wsl.localhost` UNC read can stall) must not run
+    // on the async executor: move them to the blocking pool.
+    let tokens = tauri::async_runtime::spawn_blocking(move || candidate_tokens(&paths, now_secs()))
+        .await
+        .ok()?;
     if tokens.is_empty() {
         return None;
     }

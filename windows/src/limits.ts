@@ -33,9 +33,16 @@ export function cached(): LimitProvider[] {
   } catch { return []; }
 }
 
+/// Providers the backend can probe. Hiding all of them is a real off switch:
+/// no credential read and no API call happen at all.
+const KNOWN_PROVIDERS = ["claude"];
+
 /// Asks Rust for fresh limits. A failed probe (offline, expired sign-in) keeps
 /// nothing: stale numbers would make the pet worry about an old window.
 export async function refresh(): Promise<LimitProvider[]> {
+  // Everything hidden: skip the probe and keep the cached entries, so Settings
+  // still lists the provider and the user can switch it back on.
+  if (KNOWN_PROVIDERS.every((id) => !isVisible(id))) return cached();
   let found: LimitProvider[] = [];
   try { found = await invoke<LimitProvider[]>("get_limits"); } catch { found = []; }
   localStorage.setItem(CACHE_KEY, JSON.stringify(found));

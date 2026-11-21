@@ -45,7 +45,7 @@ pub fn is_ours(line: &str) -> bool {
 /// True for any spelling of the `[hooks]` header TOML allows: a trailing
 /// comment, CRLF line endings, or spaces inside the brackets. Missing one would
 /// append a second `[hooks]` table, which is invalid TOML, and jcode then
-/// silently falls back to its default config (macOS fix a025521).
+/// silently falls back to its default config (same fix as the macOS JcodeHookConfig, PR #60).
 pub fn is_hooks_header(line: &str) -> bool {
     let code = line.split('#').next().unwrap_or("");
     code.chars().filter(|c| !c.is_whitespace()).collect::<String>() == "[hooks]"

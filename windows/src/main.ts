@@ -1,9 +1,9 @@
 import { listen, emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { Pet } from "./pet";
+import { Pet, HIT_PAD } from "./pet";
 import { SessionStore, aggregateMood, type AgentEventPayload } from "./state";
 import { BubbleRenderer } from "./bubble";
-import { loadCatalog, savedSlug, saveSlug } from "./catalog";
+import { loadCatalog, savedSlug, saveSlug, rememberPetUrl, selectedPetUrl } from "./catalog";
 import { t, setLang, type Lang } from "./i18n";
 import { bubbleLines, PET_CHAT } from "./activity";
 import * as care from "./care";
@@ -12,8 +12,8 @@ import * as usage from "./usage";
 import * as history from "./history";
 import * as reactive from "./reactive";
 import * as projectpets from "./projectpets";
-import { projectLabel } from "./projectnames";
 import * as limits from "./limits";
+import { projectLabel } from "./projectnames";
 
 // Which project THIS pet window represents. `null` = the main window (the
 // default single pet). Split-pet spawns extra windows with `?project=<id>`.
@@ -145,7 +145,7 @@ function chime(event: "done" | "waiting") {
     if (url) { pet.load(url); return; }
   }
   // Library selection (Browse/Create) wins; legacy ap_pet_custom still honoured.
-  const url = localStorage.getItem("ap_pet_custom") || localStorage.getItem("ap_pet_url");
+  const url = selectedPetUrl();
   if (url) { pet.load(url); return; }
   // First run: no selection yet , pick a starter from the catalog.
   for (;;) {
@@ -335,9 +335,12 @@ function maybeNotify(e: AgentEventPayload) {
   const proj = projectLabel(e.project || "") || e.agent;
   // Same copy as the macOS notifications.
   const title = e.state === "done" ? `${proj} ${t("finished")}` : `${proj} ${t("needs input")}`;
-  // The agent's opening line says what this turn did; the session title is only
-  // a fallback (jcode keeps one title per session, so it goes stale).
-  const doneBody = ((e.message ?? "").trim() || (e.title ?? "").trim()).slice(0, 200);
+  // jcode only: its hooks carry the agent's opening line (what this turn did),
+  // with the session title as a fallback (it goes stale, one per session). Other
+  // agents keep the generic text, like macOS.
+  const doneBody = e.agent === "jcode"
+    ? ((e.message ?? "").trim() || (store.snapshot().find((s) => s.agent === e.agent && s.session === e.session)?.title ?? "").trim()).slice(0, 200)
+    : "";
   const body = e.state === "done"
     ? (doneBody || t("Agent completed its turn"))
     : (e.message || t("Waiting for you"));
@@ -360,6 +363,10 @@ listen<{ id: string; session: string; tool: string; summary: string }>("agent-ap
 });
 listen<{ id: string; session: string }>("agent-approval-resolved", (e) => {
   store.clearApproval(e.payload.session);
+  render();
+});
+listen<{ agent: string; session: string; title: string }>("agent-title", (e) => {
+  store.setTitle(e.payload.agent, e.payload.session, e.payload.title);
   render();
 });
 listen<string>("agent-end", (e) => {
@@ -416,7 +423,7 @@ listen("sessions-request", () => {
 listen<{ slug: string; url: string }>("set-pet", (e) => {
   pet.load(e.payload.url);
   saveSlug(e.payload.slug);
-  localStorage.setItem("ap_pet_url", e.payload.url);
+  rememberPetUrl(e.payload.url);
 });
 // Language changed from Settings , re-render the bubble in the new language.
 listen<Lang>("lang-changed", (e) => { setLang(e.payload); render(); });
@@ -445,6 +452,19 @@ listen("check-updates", async () => {
   }
 });
 
+// Last interactive region in CSS px (set by reportHitRect below). Where the OS
+// can't make the transparent part click-through (Wayland: cursor_position
+// fails, so the whole window stays interactive) a press on empty space must
+// still do nothing, so the document-wide handlers check it. Same region Rust
+// uses on Windows (sprite bounds + visible bubble), so the gap between bubble
+// and sprite still counts, unlike the sprite-only alpha test `pet.hitTest`.
+let hitCss: { left: number; top: number; right: number; bottom: number } | null = null;
+function inHitRect(e: MouseEvent): boolean {
+  const r = hitCss;
+  if (!r) return true; // not reported yet: stay interactive
+  return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+}
+
 // --- interactions ------------------------------------------------------------
 // Rust makes the window click-through outside the pet's hit rect (sprite box
 // + bubble), so any left press that reaches this document is on the pet.
@@ -456,11 +476,15 @@ document.addEventListener("mousedown", async (e) => {
   if (e.button !== 0) return;
   // Bubble controls (fold, carousel dots, dismiss, Warp-focus rows) keep their clicks.
   if ((e.target as HTMLElement).closest("button, a, input, .car-dot, .focusable, [data-nodrag]")) return;
+  if (!inHitRect(e)) return;
   emit("popover-close", null);
   await invoke("drag_pet");
 });
+// Right-click opens the pet's stats card (macOS PetStatsView); the tray icon
+// opens the quick popover.
 document.addEventListener("contextmenu", (e) => {
   e.preventDefault();
+  if (!inHitRect(e)) return;
   invoke("open_stats", { pet: myPetSlug() }).catch(() => {});
 });
 
@@ -490,16 +514,39 @@ function reportHitRect() {
   } else {
     rects.push({ left: cr.left, top: cr.top, right: cr.right, bottom: cr.bottom });
   }
+  // The union below stays the "visible bounds" (keeps the pet on screen). Clicks
+  // use the PARTS (bubble, sprite) separately: a wide bubble above a narrow pet
+  // otherwise makes one big box that also grabs the empty corners beside the pet.
+  const pad = HIT_PAD; // px of slack so grabbing right at the edge still works
+  const parts: number[][] = [];
+  if (!bubbleEl.hidden) {
+    const b = bubbleEl.getBoundingClientRect();
+    if (b.width > 0) parts.push([(b.left - pad) * d, (b.top - pad) * d, (b.width + 2 * pad) * d, (b.height + 2 * pad) * d]);
+  }
+  if (pet.silhouette.length && canvas.width > 0) {
+    // The pet's outline (bands of the current frame), not its bounding box.
+    const kx = cr.width / canvas.width, ky = cr.height / canvas.height;
+    for (const b of pet.silhouette) {
+      parts.push([(cr.left + b.x * kx - pad) * d, (cr.top + b.y * ky - pad) * d, (b.w * kx + 2 * pad) * d, (b.h * ky + 2 * pad) * d]);
+    }
+  } else {
+    parts.push([(cr.left - pad) * d, (cr.top - pad) * d, (cr.width + 2 * pad) * d, (cr.height + 2 * pad) * d]);
+  }
+  const sp = rects[rects.length - 1]; // the sprite alone (pushed last), for the off-screen clamp
   const left = Math.min(...rects.map((r) => r.left));
   const top = Math.min(...rects.map((r) => r.top));
   const right = Math.max(...rects.map((r) => r.right));
   const bottom = Math.max(...rects.map((r) => r.bottom));
-  const sig = [left, top, right, bottom].map((v) => Math.round(v)).join(",");
+  hitCss = { left, top, right, bottom };
+  const sig = [left, top, right, bottom, sp.left, sp.top, sp.right, sp.bottom, ...parts.flat()].map((v) => Math.round(v)).join(",");
   if (sig === lastHitSig) return;
   lastHitSig = sig;
-  invoke("set_hit_rect", { x: left * d, y: top * d, w: (right - left) * d, h: (bottom - top) * d })
+  if (IS_MAIN) invoke("set_hit_parts", { parts }).catch(() => {});
+  invoke("set_hit_rect", { x: left * d, y: top * d, w: (right - left) * d, h: (bottom - top) * d,
+    sprite: [sp.left * d, sp.top * d, (sp.right - sp.left) * d, (sp.bottom - sp.top) * d] })
     .catch((err) => invoke("log_debug", { msg: `set_hit_rect failed: ${err}` }).catch(() => {}));
 }
+pet.onFrame = reportHitRect; // the outline changes with every animation frame
 new ResizeObserver(reportHitRect).observe(petRoot);
 window.addEventListener("resize", reportHitRect);
 reportHitRect();
